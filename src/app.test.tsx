@@ -69,6 +69,28 @@ async function waitForFrame(
   throw new Error(`Did not find ${label} in:\n${setup.captureCharFrame()}`);
 }
 
+function hasDimmedPanelBody(setup: Awaited<ReturnType<typeof testRender>>, frame: string) {
+  const lines = frame.split("\n");
+  const spans = setup.captureSpans().lines;
+  const dimmed = spans.map((line) =>
+    line.spans.some((span) => {
+      const [r, g, b, a] = span.bg.toInts();
+      return a === 255 && r > 0 && g > r && b > g;
+    }),
+  );
+  const title = lines.findIndex((line) => line.includes("pipelines") || line.includes("pipeline 5"));
+  const footer = lines.findIndex(
+    (line) => line.includes("enter graph") || line.includes("arrows move"),
+  );
+  return (
+    title >= 0 &&
+    footer > title &&
+    dimmed.some((value, index) => value && index > title && index < footer) &&
+    !dimmed[title] &&
+    !dimmed[footer]
+  );
+}
+
 async function mountApp() {
   const setup = await testRender(<App />, { width: 60, height: 12 });
   const frame = await waitForFrame(
@@ -197,6 +219,7 @@ test("list shows an animated loading line inside its frame before the graph fetc
     expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
     expect(frame).toMatch(/[╭╮╰╯]/);
     expect(frame).toContain("#42");
+    expect(hasDimmedPanelBody(setup, frame)).toBe(true);
     const lines = frame.split("\n");
     expect(lines.findIndex((line) => line.includes("pipelines"))).toBeLessThan(
       lines.findIndex((line) => line.includes("Loading pipeline…")),
@@ -346,6 +369,7 @@ test("graph shows an animated loading line inside its frame before the log scree
         expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
         expect(frame).toMatch(/[╭╮╰╯]/);
         expect(frame).toContain("[build]");
+        expect(hasDimmedPanelBody(setup, frame)).toBe(true);
         const lines = frame.split("\n");
         expect(lines.findIndex((line) => line.includes("pipeline 5"))).toBeLessThan(
           lines.findIndex((line) => line.includes("Loading log…")),

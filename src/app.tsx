@@ -24,10 +24,12 @@ const HELP_COLOR = "#9ca3af";
 export function ScreenPanel({
   title,
   footer,
+  loadingLabel,
   children,
 }: {
   title: string;
   footer: string;
+  loadingLabel?: string;
   children: ReactNode;
 }) {
   return (
@@ -41,14 +43,17 @@ export function ScreenPanel({
         flexDirection="column"
         flexGrow={1}
       >
-        {children}
+        <box position="relative" flexDirection="column" flexGrow={1}>
+          {children}
+          {loadingLabel ? <LoadingOverlay label={loadingLabel} /> : null}
+        </box>
         {footer ? <text fg={HELP_COLOR}>{footer}</text> : null}
       </box>
     </box>
   );
 }
 
-function LoadingIndicator({ label }: { label: string }) {
+function LoadingOverlay({ label }: { label: string }) {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
@@ -58,7 +63,23 @@ function LoadingIndicator({ label }: { label: string }) {
     return () => clearInterval(timer);
   }, []);
 
-  return <text fg="#60a5fa">{SPINNER_FRAMES[frame]} {label}</text>;
+  return (
+    <box
+      position="absolute"
+      top={0}
+      left={0}
+      width="100%"
+      height="100%"
+      zIndex={100}
+      backgroundColor="#111827cc"
+      alignItems="center"
+      justifyContent="center"
+    >
+      <text fg="#60a5fa">
+        {SPINNER_FRAMES[frame]} {label}
+      </text>
+    </box>
+  );
 }
 
 export function App() {
@@ -320,8 +341,8 @@ export function App() {
       <ScreenPanel
         title={`pipeline ${selectedPipeline(model)?.iid ?? ""}`}
         footer="arrows move  enter log  esc list  q quit"
+        loadingLabel={model.navigating?.kind === "logs" ? "Loading log…" : undefined}
       >
-        {model.navigating?.kind === "logs" ? <LoadingIndicator label="Loading log…" /> : null}
         {model.graph?.truncated ? <text fg="#eab308">job list truncated at 100</text> : null}
         <scrollbox focused flexGrow={1}>
           {dag
@@ -337,8 +358,11 @@ export function App() {
   }
 
   return (
-    <ScreenPanel title="pipelines" footer="enter graph  q quit">
-      {model.navigating?.kind === "graph" ? <LoadingIndicator label="Loading pipeline…" /> : null}
+    <ScreenPanel
+      title="pipelines"
+      footer="enter graph  q quit"
+      loadingLabel={model.navigating?.kind === "graph" ? "Loading pipeline…" : undefined}
+    >
       <scrollbox focused flexGrow={1}>
         {model.pipelines.map((row, index) => (
           <text key={row.id} fg={BUCKET_COLOR[row.bucket]}>
