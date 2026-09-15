@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import {
   emptyModel,
@@ -10,17 +10,50 @@ import {
   tracedJob,
 } from "./model.ts";
 import { isQuitKey } from "./keys.ts";
-import { glabBin, probeGlab } from "./glab/probe.ts";
+import { probeGlab } from "./glab/probe.ts";
 import { listPipelines } from "./glab/list.ts";
 import { fetchPipelineGraph, NeedsUnavailableError } from "./glab/graph.ts";
-import { traceArgv } from "./glab/trace.ts";
+import { spawnTrace } from "./glab/trace.ts";
 import { BUCKET_COLOR } from "./status.ts";
 import { buildDag, formatJobLine, visualJobs } from "./layout/dag.ts";
+
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+function LoadingOverlay({ label }: { label: string }) {
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFrame((current) => (current + 1) % SPINNER_FRAMES.length);
+    }, 80);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <box
+      position="absolute"
+      top={0}
+      left={0}
+      width="100%"
+      height="100%"
+      zIndex={100}
+      backgroundColor="#111827cc"
+      alignItems="center"
+      justifyContent="center"
+    >
+      <text fg="#60a5fa">
+        {SPINNER_FRAMES[frame]} {label}
+      </text>
+    </box>
+  );
+}
 
 export function App() {
   const renderer = useRenderer();
   const [model, dispatch] = useReducer(reduce, emptyModel);
   const logProc = useRef<ReturnType<typeof Bun.spawn> | null>(null);
+  const navigatingRef = useRef(model.navigating);
+  navigatingRef.current = model.navigating;
 
   useEffect(() => {
     void (async () => {
@@ -94,21 +127,23 @@ export function App() {
     };
   }, [model.screen, model.graph?.status, model.selectedIndex]);
 
+  const traceJobId =
+    model.navigating?.kind === "logs"
+      ? model.navigating.jobId
+      : model.screen === "logs"
+        ? model.logJobId
+        : null;
+
   useEffect(() => {
-    if (model.screen !== "logs" || !model.logJobId) {
+    if (!traceJobId) {
       logProc.current?.kill();
       logProc.current = null;
       return;
     }
-    const jobId = model.logJobId;
+    const jobId = traceJobId;
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      proc = Bun.spawn([glabBin(), ...traceArgv(jobId)], {
-        cwd: process.cwd(),
-        stdout: "pipe",
-        stderr: "pipe",
-        stdin: "ignore",
-      });
+      proc = spawnTrace(jobId);
     } catch (error) {
       dispatch({
         type: "error",
@@ -132,22 +167,27 @@ export function App() {
         }
       }
     };
-    void (async () => {
-      await Promise.all([
-        read(proc.stdout as ReadableStream<Uint8Array>),
-        read(proc.stderr as ReadableStream<Uint8Array>),
-      ]);
-      await proc.exited;
-      if (!cancelled) {
-        dispatch({ type: "logDone" });
-      }
-    })();
+    // Let the graph paint its loading state before switching screens.
+    const readyTimer = setTimeout(() => {
+      dispatch({ type: "logsReady" });
+      void (async () => {
+        await Promise.all([
+          read(proc.stdout as ReadableStream<Uint8Array>),
+          read(proc.stderr as ReadableStream<Uint8Array>),
+        ]);
+        await proc.exited;
+        if (!cancelled) {
+          dispatch({ type: "logDone" });
+        }
+      })();
+    }, 0);
     return () => {
       cancelled = true;
+      clearTimeout(readyTimer);
       proc.kill();
       logProc.current = null;
     };
-  }, [model.screen, model.logJobId]);
+  }, [traceJobId]);
 
   const dag = useMemo(
     () => (model.graph ? buildDag(model.graph.jobs) : null),
@@ -175,10 +215,16 @@ export function App() {
         dispatch({ type: "moveList", delta: 1 });
       }
       if (key.name === "return") {
+        if (navigatingRef.current !== null) {
+          return;
+        }
         const row = selectedPipeline(model);
         if (!row) {
           return;
         }
+        const target = { kind: "graph" as const, pipelineIid: String(row.iid) };
+        navigatingRef.current = target;
+        dispatch({ type: "startNavigating", target });
         void fetchPipelineGraph(String(row.iid))
           .then((graph) => dispatch({ type: "openGraph", graph }))
           .catch((error: unknown) =>
@@ -212,6 +258,14 @@ export function App() {
         }
       }
       if (key.name === "return") {
+        if (navigatingRef.current !== null) {
+          return;
+        }
+        const job = focusedJob(model);
+        if (!job) {
+          return;
+        }
+        navigatingRef.current = { kind: "logs", jobId: job.numericId };
         dispatch({ type: "openLogs" });
       }
     }
@@ -260,6 +314,9 @@ export function App() {
           <text fg="#eab308">job list truncated at 100</text>
         ) : null}
         <text fg="#9ca3af">arrows move  enter log  esc list  q quit</text>
+        {model.navigating?.kind === "logs" ? (
+          <LoadingOverlay label="Loading log…" />
+        ) : null}
         <scrollbox focused flexGrow={1}>
           {dag
             ? visualJobs(dag).map((job) => (
@@ -276,6 +333,9 @@ export function App() {
   return (
     <box padding={1} flexDirection="column" flexGrow={1}>
       <text>pipelines  enter graph  q quit</text>
+      {model.navigating?.kind === "graph" ? (
+        <LoadingOverlay label="Loading pipeline…" />
+      ) : null}
       <scrollbox focused flexGrow={1}>
         {model.pipelines.map((row, index) => (
           <text key={row.id} fg={BUCKET_COLOR[row.bucket]}>

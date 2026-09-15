@@ -5,6 +5,10 @@ import { appendLogBuffer } from "./log-text.ts";
 
 export type Screen = "list" | "graph" | "logs";
 
+export type Navigating =
+  | { kind: "graph"; pipelineIid: string }
+  | { kind: "logs"; jobId: string };
+
 export type AppModel = {
   screen: Screen;
   error: string | null;
@@ -17,6 +21,7 @@ export type AppModel = {
   logJobId: string | null;
   logBuffer: string;
   logDone: boolean;
+  navigating: Navigating | null;
 };
 
 export const emptyModel: AppModel = {
@@ -31,16 +36,19 @@ export const emptyModel: AppModel = {
   logJobId: null,
   logBuffer: "",
   logDone: false,
+  navigating: null,
 };
 
 export type Action =
   | { type: "error"; message: string; fatal?: boolean }
   | { type: "pipelines"; pipelines: PipelineRow[] }
   | { type: "moveList"; delta: number }
+  | { type: "startNavigating"; target: NonNullable<AppModel["navigating"]> }
   | { type: "openGraph"; graph: PipelineGraph }
   | { type: "refreshGraph"; graph: PipelineGraph }
   | { type: "focusJob"; id: string }
   | { type: "openLogs" }
+  | { type: "logsReady" }
   | { type: "logChunk"; chunk: string }
   | { type: "logDone" }
   | { type: "back" };
@@ -83,6 +91,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
         error: action.message,
         errorFatal: action.fatal ?? false,
         booted: true,
+        navigating: null,
       };
     case "pipelines":
       return {
@@ -101,6 +110,8 @@ export function reduce(model: AppModel, action: Action): AppModel {
           model.pipelines.length,
         ),
       };
+    case "startNavigating":
+      return { ...model, navigating: action.target };
     case "openGraph":
       return {
         ...model,
@@ -109,6 +120,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
         focusedJobIndex: 0,
         error: null,
         errorFatal: false,
+        navigating: null,
       };
     case "refreshGraph": {
       if (model.screen === "logs") {
@@ -135,10 +147,20 @@ export function reduce(model: AppModel, action: Action): AppModel {
       }
       return {
         ...model,
+        navigating: { kind: "logs", jobId: job.numericId },
+      };
+    }
+    case "logsReady": {
+      if (model.navigating?.kind !== "logs") {
+        return model;
+      }
+      return {
+        ...model,
         screen: "logs",
-        logJobId: job.numericId,
+        logJobId: model.navigating.jobId,
         logBuffer: "",
         logDone: false,
+        navigating: null,
       };
     }
     case "logChunk":
@@ -148,6 +170,9 @@ export function reduce(model: AppModel, action: Action): AppModel {
     case "back":
       if (model.error && !model.errorFatal) {
         return { ...model, error: null };
+      }
+      if (model.navigating?.kind === "logs") {
+        return { ...model, navigating: null };
       }
       if (model.screen === "logs") {
         return {

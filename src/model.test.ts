@@ -61,6 +61,7 @@ test("bridge job opens logs on the same pipeline graph", () => {
   });
   model = reduce(model, { type: "focusJob", id: "trigger" });
   model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "logsReady" });
   expect(model.screen).toBe("logs");
   expect(focusedJob(model)?.isBridge).toBe(true);
   expect(model.graph?.iid).toBe("9");
@@ -70,6 +71,7 @@ test("log screen stays after tracer exits; back returns to the same job", () => 
   let model = reduce(emptyModel, { type: "openGraph", graph: graph([job("a"), job("b")]) });
   model = reduce(model, { type: "focusJob", id: "b" });
   model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "logsReady" });
   model = reduce(model, { type: "logChunk", chunk: "hello\n" });
   model = reduce(model, { type: "logDone" });
   expect(model.screen).toBe("logs");
@@ -92,7 +94,8 @@ test("polling is only on the graph of an active pipeline", () => {
     graph: graph([job("a")], "RUNNING"),
   });
   expect(shouldPollGraph(running)).toBe(true);
-  expect(shouldPollGraph(reduce(running, { type: "openLogs" }))).toBe(false);
+  const openingLogs = reduce(running, { type: "openLogs" });
+  expect(shouldPollGraph(reduce(openingLogs, { type: "logsReady" }))).toBe(false);
   expect(
     shouldPollGraph(reduce(emptyModel, { type: "openGraph", graph: graph([job("a")], "SUCCESS") })),
   ).toBe(false);
@@ -105,10 +108,51 @@ test("refresh while logs keeps the traced job even if focus would fall back", ()
   });
   model = reduce(model, { type: "focusJob", id: "b" });
   model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "logsReady" });
   model = reduce(model, { type: "refreshGraph", graph: graph([job("a")], "RUNNING") });
   expect(model.screen).toBe("logs");
   expect(model.logJobId).toBe("b");
   expect(model.focusedJobIndex).toBe(1);
+});
+
+test("emptyModel navigating is null", () => {
+  expect(emptyModel.navigating).toBeNull();
+});
+
+test("startNavigating sets navigating to the given target", () => {
+  const target = { kind: "graph" as const, pipelineIid: "5" };
+  expect(reduce(emptyModel, { type: "startNavigating", target }).navigating).toEqual(target);
+});
+
+test("openGraph and error clear navigating", () => {
+  const loading = reduce(emptyModel, {
+    type: "startNavigating",
+    target: { kind: "graph", pipelineIid: "5" },
+  });
+  expect(reduce(loading, { type: "openGraph", graph: graph([job("a")]) }).navigating).toBeNull();
+  expect(reduce(loading, { type: "error", message: "fail", fatal: false }).navigating).toBeNull();
+});
+
+test("openLogs only sets navigating; logsReady opens the log screen", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graph([job("a")]) });
+  model = reduce(model, { type: "openLogs" });
+  expect(model.screen).toBe("graph");
+  expect(model.navigating).toEqual({ kind: "logs", jobId: "a" });
+  model = reduce(model, { type: "logsReady" });
+  expect(model.screen).toBe("logs");
+  expect(model.logJobId).toBe("a");
+  expect(model.logBuffer).toBe("");
+  expect(model.logDone).toBe(false);
+  expect(model.navigating).toBeNull();
+});
+
+test("logsReady is ignored after log navigation is cancelled", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graph([job("a")]) });
+  model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "back" });
+  expect(model.screen).toBe("graph");
+  expect(model.navigating).toBeNull();
+  expect(reduce(model, { type: "logsReady" })).toEqual(model);
 });
 
 test("non-fatal error clears on back", () => {
