@@ -25,3 +25,4 @@
 ## 5. Manual Refresh
 
 - [x] 5.1 Add a manual refresh key (`r`) for the list and graph screens performing a one-shot fetch with loading feedback and non-fatal failure handling; verify application tests cover refresh after terminal stop, preserved selection/focus, and failure warnings.
+- [x] 5.2 Show a spinner with a refreshing status in the visible panel's footer while a background refresh is in flight, clearing when the request settles; verify application tests cover the status appearing during an in-flight refresh and clearing after it completes.

@@ -25,7 +25,7 @@ GitLab exposes CI GraphQL subscriptions over Action Cable on some versions and f
 
 The list screen will run `glab ci list -F json` while at least one current row has a running or pending status. The graph screen will run the existing `glab api graphql` pipeline/jobs query while the selected graph is running or pending. Each loop schedules its next tick only after the current subprocess settles, preventing overlapping requests when GitLab or `glab` is slow.
 
-A four-second normal interval preserves the existing request rate and provides prompt updates without increasing steady-state API traffic. The loop starts with an immediate refresh when entering an eligible screen, then waits between subsequent requests.
+A four-second normal interval preserves the existing request rate and provides prompt updates without increasing steady-state API traffic. The loop starts with an immediate refresh when entering an eligible screen, then waits between subsequent requests. While a background refresh is in flight, the visible screen's footer shows a spinner with a refreshing status so in-flight polling is observable without interrupting the view; the status clears when the request settles.
 
 Alternative: a fixed timer can overlap slow commands and increase rate-limit risk. A shared global loop complicates screen lifecycle and can refresh hidden data.
 

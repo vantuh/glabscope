@@ -16,6 +16,7 @@ let traceStdout: Uint8Array | null = null;
 let listCalls = 0;
 let listScript: (PipelineRow[] | Error)[] = [];
 let listDefault: PipelineRow[] = [];
+let listGate: PromiseWithResolvers<PipelineRow[]> | null = null;
 let graphScript: (PipelineGraph | Error)[] = [];
 
 function sampleGraph(): PipelineGraph {
@@ -189,17 +190,24 @@ beforeEach(() => {
     },
   ];
   graphScript = [];
+  listGate = null;
 
   spyOn(probeModule, "probeGlab").mockResolvedValue({ ok: true });
   spyOn(listModule, "listPipelines").mockImplementation(() => {
     listCalls += 1;
     // The boot load always uses the default rows; scripted responses apply
     // to background refreshes only.
-    const next = listCalls > 1 ? listScript.shift() : undefined;
-    if (next instanceof Error) {
-      return Promise.reject(next);
+    if (listCalls > 1) {
+      if (listGate) {
+        return listGate.promise;
+      }
+      const next = listScript.shift();
+      if (next instanceof Error) {
+        return Promise.reject(next);
+      }
+      return Promise.resolve(next ?? listDefault);
     }
-    return Promise.resolve(next ?? listDefault);
+    return Promise.resolve(listDefault);
   });
   spyOn(graphModule, "fetchPipelineGraph").mockImplementation((iid: string) => {
     fetchGraphCalls.push(iid);
@@ -861,6 +869,29 @@ test("r refetches the graph after polling stopped and shows new jobs", async () 
     setup.mockInput.pressKey("r");
     await waitForFrame(setup, (frame) => frame.includes("[deploy]"), "graph with retried-in job");
     expect(fetchGraphCalls.length).toBe(callsBefore + 1);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("the footer shows a refreshing spinner while a background refresh is in flight", async () => {
+  listDefault = [runningRow(42, 5)];
+  listGate = Promise.withResolvers<PipelineRow[]>();
+  const setup = await testRender(<App />, { width: 60, height: 12 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("refreshing…") && /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(frame),
+      "in-flight refresh status",
+    );
+    // Settling the request clears the status.
+    listGate.resolve([runningRow(42, 5)]);
+    await waitForFrame(
+      setup,
+      (frame) => !frame.includes("refreshing…"),
+      "refresh status cleared",
+    );
   } finally {
     setup.renderer.destroy();
   }

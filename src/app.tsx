@@ -27,11 +27,13 @@ const HELP_COLOR = "#9ca3af";
 export function ScreenPanel({
   title,
   footer,
+  status,
   loadingLabel,
   children,
 }: {
   title: string;
   footer: string;
+  status?: ReactNode;
   loadingLabel?: string;
   children: ReactNode;
 }) {
@@ -50,21 +52,39 @@ export function ScreenPanel({
           {children}
           {loadingLabel ? <LoadingOverlay label={loadingLabel} /> : null}
         </box>
-        {footer ? <text fg={HELP_COLOR}>{footer}</text> : null}
+        {footer ? (
+          <box flexDirection="row">
+            <text fg={HELP_COLOR}>{footer}</text>
+            {status}
+          </box>
+        ) : null}
       </box>
     </box>
   );
 }
 
-function LoadingOverlay({ label }: { label: string }) {
+function useSpinnerFrame(): number {
   const [frame, setFrame] = useState(0);
-
   useEffect(() => {
     const timer = setInterval(() => {
       setFrame((current) => (current + 1) % SPINNER_FRAMES.length);
     }, 80);
     return () => clearInterval(timer);
   }, []);
+  return frame;
+}
+
+function RefreshStatus({ label }: { label: string }) {
+  const frame = useSpinnerFrame();
+  return (
+    <text fg="#60a5fa">
+      {"  "}{SPINNER_FRAMES[frame]} {label}
+    </text>
+  );
+}
+
+function LoadingOverlay({ label }: { label: string }) {
+  const frame = useSpinnerFrame();
 
   return (
     <box
@@ -88,6 +108,7 @@ function LoadingOverlay({ label }: { label: string }) {
 export function App() {
   const renderer = useRenderer();
   const [model, dispatch] = useReducer(reduce, emptyModel);
+  const [refreshing, setRefreshing] = useState<"list" | "graph" | null>(null);
   const logProc = useRef<ReturnType<typeof Bun.spawn> | null>(null);
   const navigatingRef = useRef(model.navigating);
   navigatingRef.current = model.navigating;
@@ -122,11 +143,13 @@ export function App() {
       if (stopped) {
         return;
       }
+      setRefreshing("list");
       try {
         const rows = await listPipelines();
         if (stopped) {
           return;
         }
+        setRefreshing(null);
         dispatch({ type: "pipelines", pipelines: rows });
         delay = nextPollDelay(delay, false);
         if (!rows.some((row) => row.bucket === "running-or-pending")) {
@@ -136,6 +159,7 @@ export function App() {
         if (stopped) {
           return;
         }
+        setRefreshing(null);
         if (error instanceof RateLimitedError) {
           delay = nextPollDelay(delay, true);
         } else {
@@ -155,6 +179,7 @@ export function App() {
       if (timer) {
         clearTimeout(timer);
       }
+      setRefreshing(null);
     };
     // The second dependency is a boolean: the loop keeps its own schedule
     // while active rows remain, and restarts only when eligibility flips.
@@ -176,11 +201,13 @@ export function App() {
       if (stopped) {
         return;
       }
+      setRefreshing("graph");
       try {
         const graph = await fetchPipelineGraph(String(iid));
         if (stopped) {
           return;
         }
+        setRefreshing(null);
         dispatch({ type: "refreshGraph", graph });
         delay = nextPollDelay(delay, false);
         if (!isActivePipelineStatus(graph.status)) {
@@ -190,6 +217,7 @@ export function App() {
         if (stopped) {
           return;
         }
+        setRefreshing(null);
         if (error instanceof RateLimitedError) {
           delay = nextPollDelay(delay, true);
         } else {
@@ -209,6 +237,7 @@ export function App() {
       if (timer) {
         clearTimeout(timer);
       }
+      setRefreshing(null);
     };
   }, [model.screen, model.graph?.status, model.graph?.iid]);
 
@@ -427,6 +456,7 @@ export function App() {
       <ScreenPanel
         title={`pipeline ${model.graph?.iid ?? ""}`}
         footer="arrows move  enter log  r refresh  esc list  q quit"
+        status={refreshing === "graph" ? <RefreshStatus label="refreshing…" /> : undefined}
         loadingLabel={
           model.navigating?.kind === "logs"
             ? "Loading log…"
@@ -456,6 +486,7 @@ export function App() {
     <ScreenPanel
       title="pipelines"
       footer="enter graph  r refresh  q quit"
+      status={refreshing === "list" ? <RefreshStatus label="refreshing…" /> : undefined}
       loadingLabel={
         model.navigating?.kind === "graph"
           ? "Loading pipeline…"
