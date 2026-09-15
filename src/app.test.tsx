@@ -50,6 +50,7 @@ function fakeProc(): ReturnType<typeof Bun.spawn> {
   } as ReturnType<typeof Bun.spawn>;
 }
 
+import type { CapturedSpan } from "@opentui/core";
 import { testRender } from "@opentui/react/test-utils";
 import { App, ScreenPanel } from "./app.tsx";
 
@@ -69,25 +70,48 @@ async function waitForFrame(
   throw new Error(`Did not find ${label} in:\n${setup.captureCharFrame()}`);
 }
 
+function isDimmed(span: CapturedSpan) {
+  const [r, g, b, a] = span.bg.toInts();
+  return a === 255 && r > 0 && g > r && b > g;
+}
+
+function isDimmedAt(spans: CapturedSpan[], column: number) {
+  let offset = 0;
+  for (const span of spans) {
+    if (column >= offset && column < offset + span.width) {
+      return isDimmed(span);
+    }
+    offset += span.width;
+  }
+  return false;
+}
+
 function hasDimmedPanelBody(setup: Awaited<ReturnType<typeof testRender>>, frame: string) {
   const lines = frame.split("\n");
   const spans = setup.captureSpans().lines;
-  const dimmed = spans.map((line) =>
-    line.spans.some((span) => {
-      const [r, g, b, a] = span.bg.toInts();
-      return a === 255 && r > 0 && g > r && b > g;
-    }),
-  );
+  const dimmed = spans.map((line) => line.spans.some(isDimmed));
   const title = lines.findIndex((line) => line.includes("pipelines") || line.includes("pipeline 5"));
   const footer = lines.findIndex(
     (line) => line.includes("enter graph") || line.includes("arrows move"),
   );
+  const bordersUndimmed = lines.every((line, index) => {
+    if (line.includes("╭") || line.includes("╰")) {
+      return !dimmed[index];
+    }
+    const left = line.indexOf("│");
+    const right = line.lastIndexOf("│");
+    return (
+      left < 0 ||
+      (!isDimmedAt(spans[index]?.spans ?? [], left) && !isDimmedAt(spans[index]?.spans ?? [], right))
+    );
+  });
   return (
     title >= 0 &&
     footer > title &&
     dimmed.some((value, index) => value && index > title && index < footer) &&
     !dimmed[title] &&
-    !dimmed[footer]
+    !dimmed[footer] &&
+    bordersUndimmed
   );
 }
 
