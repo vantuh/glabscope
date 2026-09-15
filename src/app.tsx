@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import {
   emptyModel,
@@ -18,6 +18,35 @@ import { BUCKET_COLOR } from "./status.ts";
 import { buildDag, formatJobLine, visualJobs } from "./layout/dag.ts";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const CHROME_COLOR = "#4b5563";
+const HELP_COLOR = "#9ca3af";
+
+export function ScreenPanel({
+  title,
+  footer,
+  children,
+}: {
+  title: string;
+  footer: string;
+  children: ReactNode;
+}) {
+  return (
+    <box padding={1} flexDirection="column" flexGrow={1}>
+      <box
+        border
+        borderStyle="rounded"
+        borderColor={CHROME_COLOR}
+        title={title}
+        titleColor={CHROME_COLOR}
+        flexDirection="column"
+        flexGrow={1}
+      >
+        {children}
+        {footer ? <text fg={HELP_COLOR}>{footer}</text> : null}
+      </box>
+    </box>
+  );
+}
 
 function LoadingOverlay({ label }: { label: string }) {
   const [frame, setFrame] = useState(0);
@@ -273,76 +302,73 @@ export function App() {
 
   if (!model.booted) {
     return (
-      <box padding={1}>
+      <ScreenPanel title="startup" footer="q quit">
         <text>Checking glab…</text>
-      </box>
+      </ScreenPanel>
     );
   }
 
   if (model.error) {
     return (
-      <box padding={1}>
+      <ScreenPanel title="error" footer={model.errorFatal ? "q quit" : "esc back  q quit"}>
         <text fg="#ef4444">{model.errorFatal ? "Cannot start" : "Error"}</text>
         <text>{model.error}</text>
-        <text fg="#9ca3af">{model.errorFatal ? "q quit" : "esc back  q quit"}</text>
-      </box>
+      </ScreenPanel>
     );
   }
 
   if (model.screen === "logs") {
     const job = tracedJob(model);
     return (
-      <box padding={1} flexDirection="column" flexGrow={1}>
-        <text>
-          log {job?.name} {model.logDone ? "(ended, esc back)" : "(live, esc back)"}
-        </text>
-        <scrollbox focused flexGrow={1} stickyScroll stickyStart="bottom">
+      <ScreenPanel
+        title={`log ${job?.name ?? "job"}`}
+        footer={`${model.logDone ? "ended" : "live"} · esc back`}
+      >
+        <scrollbox focused flexGrow={1} stickyScroll>
           <text>{model.logBuffer || "waiting for glab ci trace…"}</text>
         </scrollbox>
-      </box>
+      </ScreenPanel>
     );
   }
 
   if (model.screen === "graph") {
     const focusedId = focusedJob(model)?.id;
     return (
-      <box padding={1} flexDirection="column" flexGrow={1}>
-        <text>
-          pipeline iid {selectedPipeline(model)?.iid}  status {model.graph?.status}
-        </text>
-        {model.graph?.truncated ? (
-          <text fg="#eab308">job list truncated at 100</text>
-        ) : null}
-        <text fg="#9ca3af">arrows move  enter log  esc list  q quit</text>
-        {model.navigating?.kind === "logs" ? (
-          <LoadingOverlay label="Loading log…" />
-        ) : null}
-        <scrollbox focused flexGrow={1}>
-          {dag
-            ? visualJobs(dag).map((job) => (
-                <text key={job.id} fg={BUCKET_COLOR[job.bucket]}>
-                  {formatJobLine(job, focusedId)}
-                </text>
-              ))
-            : null}
-        </scrollbox>
+      <box flexDirection="column" flexGrow={1}>
+        <ScreenPanel
+          title={`pipeline ${selectedPipeline(model)?.iid ?? ""}`}
+          footer="arrows move  enter log  esc list  q quit"
+        >
+          {model.graph?.truncated ? (
+            <text fg="#eab308">job list truncated at 100</text>
+          ) : null}
+          <scrollbox focused flexGrow={1}>
+            {dag
+              ? visualJobs(dag).map((job) => (
+                  <text key={job.id} fg={BUCKET_COLOR[job.bucket]}>
+                    {formatJobLine(job, focusedId)}
+                  </text>
+                ))
+              : null}
+          </scrollbox>
+        </ScreenPanel>
+        {model.navigating?.kind === "logs" ? <LoadingOverlay label="Loading log…" /> : null}
       </box>
     );
   }
 
   return (
-    <box padding={1} flexDirection="column" flexGrow={1}>
-      <text>pipelines  enter graph  q quit</text>
-      {model.navigating?.kind === "graph" ? (
-        <LoadingOverlay label="Loading pipeline…" />
-      ) : null}
-      <scrollbox focused flexGrow={1}>
-        {model.pipelines.map((row, index) => (
-          <text key={row.id} fg={BUCKET_COLOR[row.bucket]}>
-            {index === model.selectedIndex ? ">" : " "} #{row.id}  {row.status}  {row.ref}
-          </text>
-        ))}
-      </scrollbox>
+    <box flexDirection="column" flexGrow={1}>
+      <ScreenPanel title="pipelines" footer="enter graph  q quit">
+        <scrollbox focused flexGrow={1}>
+          {model.pipelines.map((row, index) => (
+            <text key={row.id} fg={BUCKET_COLOR[row.bucket]}>
+              {index === model.selectedIndex ? ">" : " "} #{row.id}  {row.status}  {row.ref}
+            </text>
+          ))}
+        </scrollbox>
+      </ScreenPanel>
+      {model.navigating?.kind === "graph" ? <LoadingOverlay label="Loading pipeline…" /> : null}
     </box>
   );
 }

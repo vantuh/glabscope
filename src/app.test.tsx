@@ -9,6 +9,7 @@ const fetchGraphCalls: string[] = [];
 let graphGate = Promise.withResolvers<PipelineGraph>();
 let spawnCalls = 0;
 let spawnShouldThrow = false;
+let traceStaysLive = false;
 
 function sampleGraph(): PipelineGraph {
   return {
@@ -42,15 +43,15 @@ function closedStream() {
 
 function fakeProc(): ReturnType<typeof Bun.spawn> {
   return {
-    stdout: closedStream(),
-    stderr: closedStream(),
-    exited: Promise.resolve(0),
+    stdout: traceStaysLive ? new ReadableStream<Uint8Array>({}) : closedStream(),
+    stderr: traceStaysLive ? new ReadableStream<Uint8Array>({}) : closedStream(),
+    exited: traceStaysLive ? new Promise(() => {}) : Promise.resolve(0),
     kill() {},
   } as ReturnType<typeof Bun.spawn>;
 }
 
 import { testRender } from "@opentui/react/test-utils";
-import { App } from "./app.tsx";
+import { App, ScreenPanel } from "./app.tsx";
 
 async function waitForFrame(
   setup: Awaited<ReturnType<typeof testRender>>,
@@ -92,14 +93,22 @@ function hasFullscreenDimOverlay(setup: Awaited<ReturnType<typeof testRender>>) 
 
 async function mountApp() {
   const setup = await testRender(<App />, { width: 60, height: 12 });
-  await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+  const frame = await waitForFrame(
+    setup,
+    (frame) => frame.includes("pipelines"),
+    "pipelines list",
+  );
+  expect(frame).toMatch(/[╭╮╰╯]/);
+  expect(frame.match(/pipelines/g)).toHaveLength(1);
   return setup;
 }
 
 async function openGraph(setup: Awaited<ReturnType<typeof testRender>>) {
   setup.mockInput.pressEnter();
   graphGate.resolve(sampleGraph());
-  await waitForFrame(setup, (frame) => frame.includes("[build]"), "graph screen");
+  const frame = await waitForFrame(setup, (frame) => frame.includes("[build]"), "graph screen");
+  expect(frame).toContain("pipeline 5");
+  expect(frame).toMatch(/[╭╮╰╯]/);
 }
 
 beforeEach(() => {
@@ -107,6 +116,7 @@ beforeEach(() => {
   graphGate = Promise.withResolvers();
   spawnCalls = 0;
   spawnShouldThrow = false;
+  traceStaysLive = false;
 
   spyOn(probeModule, "probeGlab").mockResolvedValue({ ok: true });
   spyOn(listModule, "listPipelines").mockResolvedValue([
@@ -136,6 +146,24 @@ afterEach(() => {
   mock.restore();
 });
 
+test("screen panel renders rounded chrome with its title", async () => {
+  const setup = await testRender(
+    <ScreenPanel title="startup" footer="q quit">
+      <text>Checking glab…</text>
+    </ScreenPanel>,
+    { width: 40, height: 8 },
+  );
+  try {
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("startup");
+    expect(frame).toContain("Checking glab");
+    expect(frame).toMatch(/[╭╮╰╯]/);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
 test("blank TUI renders and exits on q", async () => {
   let exited = false;
   const originalExit = process.exit;
@@ -152,6 +180,10 @@ test("blank TUI renders and exits on q", async () => {
       "boot screen",
     );
     expect(frame.includes("Checking glab") || frame.includes("pipelines")).toBe(true);
+    expect(frame).toMatch(/[╭╮╰╯]/);
+    if (frame.includes("Checking glab")) {
+      expect(frame).toContain("startup");
+    }
     setup.mockInput.pressKey("q");
     await setup.renderOnce();
     expect(exited).toBe(true);
@@ -186,6 +218,7 @@ test("list shows an animated fullscreen loading overlay before the graph fetch r
     expect(frame).toContain("pipeline…");
     expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
     expect(hasFullscreenDimOverlay(setup)).toBe(true);
+    expect(frame).toMatch(/[╭╮╰╯]/);
     expect(frame).toContain("#42");
     expect(frame).not.toContain("[build]");
 
@@ -213,6 +246,8 @@ test("graph fetch failure clears loading and allows retry", async () => {
       (text) => text.includes("graph failed"),
       "graph error",
     );
+    expect(errorFrame).toContain("error");
+    expect(errorFrame).toMatch(/[╭╮╰╯]/);
     expect(errorFrame).not.toContain("pipeline…");
 
     setup.mockInput.pressEscape();
@@ -224,6 +259,23 @@ test("graph fetch failure clears loading and allows retry", async () => {
     expect(fetchGraphCalls).toEqual(["5", "5"]);
   } finally {
     graphGate.resolve(sampleGraph());
+    setup.renderer.destroy();
+  }
+});
+
+test("graph keeps the truncation warning inside its chrome", async () => {
+  const setup = await mountApp();
+  try {
+    setup.mockInput.pressEnter();
+    graphGate.resolve({ ...sampleGraph(), truncated: true });
+    const frame = await waitForFrame(
+      setup,
+      (text) => text.includes("job list truncated at 100"),
+      "truncated graph",
+    );
+    expect(frame).toContain("pipeline 5");
+    expect(frame).toMatch(/[╭╮╰╯]/);
+  } finally {
     setup.renderer.destroy();
   }
 });
@@ -274,6 +326,25 @@ test("spawn failure clears loading and shows the error screen", async () => {
   }
 });
 
+test("live log chrome keeps the waiting message inside the panel", async () => {
+  const setup = await mountApp();
+  try {
+    await openGraph(setup);
+    traceStaysLive = true;
+    setup.mockInput.pressEnter();
+    const frame = await waitForFrame(
+      setup,
+      (text) => text.includes("live · esc back"),
+      "live log screen",
+    );
+    expect(frame).toContain("log build");
+    expect(frame).toContain("waiting for glab ci trace…");
+    expect(frame).toMatch(/[╭╮╰╯]/);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
 test("graph shows a fullscreen loading overlay after confirm before the log screen", async () => {
   const setup = await mountApp();
   try {
@@ -288,6 +359,7 @@ test("graph shows a fullscreen loading overlay after confirm before the log scre
         expect(frame).toContain("log…");
         expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
         expect(hasFullscreenDimOverlay(setup)).toBe(true);
+        expect(frame).toMatch(/[╭╮╰╯]/);
         expect(frame).toContain("[build]");
         sawLoading = true;
         break;
@@ -299,10 +371,13 @@ test("graph shows a fullscreen loading overlay after confirm before the log scre
     }
     const endedFrame = await waitForFrame(
       setup,
-      (text) => text.includes("ended, esc back"),
+      (text) => text.includes("ended · esc back"),
       "ended log screen",
     );
-    expect(endedFrame).toContain("ended, esc back");
+    expect(endedFrame).toContain("log build");
+    expect(endedFrame).toContain("ended · esc back");
+    expect(endedFrame).toContain("waiting for glab ci trace…");
+    expect(endedFrame).toMatch(/[╭╮╰╯]/);
   } finally {
     setup.renderer.destroy();
   }
