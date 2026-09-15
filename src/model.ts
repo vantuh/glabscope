@@ -239,15 +239,9 @@ export function reduce(model: AppModel, action: Action): AppModel {
 }
 
 export function shouldPollGraph(model: AppModel): boolean {
-  if (model.screen !== "graph" || !model.graph) {
-    return false;
-  }
-  return isActivePipelineStatus(model.graph.status);
+  return model.screen === "graph" && model.graph !== null;
 }
 
 export function shouldPollList(model: AppModel): boolean {
-  if (model.screen !== "list") {
-    return false;
-  }
-  return model.pipelines.some((row) => row.bucket === "running-or-pending");
+  return model.screen === "list" && model.pipelines.length > 0;
 }

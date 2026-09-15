@@ -10,7 +10,7 @@ import {
   shouldPollList,
   tracedJob,
 } from "./model.ts";
-import { NORMAL_POLL_MS, nextPollDelay } from "./polling.ts";
+import { IDLE_POLL_MS, NORMAL_POLL_MS, nextPollDelay } from "./polling.ts";
 import { isQuitKey } from "./keys.ts";
 import { probeGlab } from "./glab/probe.ts";
 import { listPipelines } from "./glab/list.ts";
@@ -136,7 +136,10 @@ export function App() {
     if (!shouldPollList(model)) {
       return;
     }
-    let delay = NORMAL_POLL_MS;
+    const activeAtEntry = model.pipelines.some(
+      (row) => row.bucket === "running-or-pending",
+    );
+    let delay = activeAtEntry ? NORMAL_POLL_MS : IDLE_POLL_MS;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
@@ -151,10 +154,9 @@ export function App() {
         }
         setRefreshing(null);
         dispatch({ type: "pipelines", pipelines: rows });
-        delay = nextPollDelay(delay, false);
-        if (!rows.some((row) => row.bucket === "running-or-pending")) {
-          return;
-        }
+        delay = rows.some((row) => row.bucket === "running-or-pending")
+          ? nextPollDelay(delay, false)
+          : IDLE_POLL_MS;
       } catch (error) {
         if (stopped) {
           return;
@@ -173,7 +175,11 @@ export function App() {
         timer = setTimeout(() => void tick(), delay);
       }
     };
-    void tick();
+    if (activeAtEntry) {
+      void tick();
+    } else {
+      timer = setTimeout(() => void tick(), delay);
+    }
     return () => {
       stopped = true;
       if (timer) {
@@ -194,7 +200,7 @@ export function App() {
       return;
     }
     const iid = graph.iid;
-    let delay = NORMAL_POLL_MS;
+    let delay = isActivePipelineStatus(graph.status) ? NORMAL_POLL_MS : IDLE_POLL_MS;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
@@ -209,10 +215,9 @@ export function App() {
         }
         setRefreshing(null);
         dispatch({ type: "refreshGraph", graph });
-        delay = nextPollDelay(delay, false);
-        if (!isActivePipelineStatus(graph.status)) {
-          return;
-        }
+        delay = isActivePipelineStatus(graph.status)
+          ? nextPollDelay(delay, false)
+          : IDLE_POLL_MS;
       } catch (error) {
         if (stopped) {
           return;
@@ -231,7 +236,11 @@ export function App() {
         timer = setTimeout(() => void tick(), delay);
       }
     };
-    void tick();
+    if (isActivePipelineStatus(graph.status)) {
+      void tick();
+    } else {
+      timer = setTimeout(() => void tick(), delay);
+    }
     return () => {
       stopped = true;
       if (timer) {
@@ -239,7 +248,7 @@ export function App() {
       }
       setRefreshing(null);
     };
-  }, [model.screen, model.graph?.status, model.graph?.iid]);
+  }, [model.screen, model.graph?.iid]);
 
   const traceJobId =
     model.navigating?.kind === "logs"

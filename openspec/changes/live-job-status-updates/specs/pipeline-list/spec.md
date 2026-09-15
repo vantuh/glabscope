@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Refresh active pipeline statuses
-While the pipeline list contains at least one running or pending pipeline, the system SHALL refresh the list automatically on a bounded interval. The system MUST stop automatic refresh when no visible pipeline is running or pending.
+While the pipeline list contains at least one running or pending pipeline, the system SHALL refresh the list automatically on a bounded interval. When no visible pipeline is running or pending, the system SHALL slow automatic refresh to a bounded watch interval instead of stopping, so externally started pipelines still appear.
 
 #### Scenario: Active pipeline changes status
 - **WHEN** the operator remains on the pipeline list and a visible running or pending pipeline changes status
@@ -9,7 +9,11 @@ While the pipeline list contains at least one running or pending pipeline, the s
 
 #### Scenario: No active pipelines remain
 - **WHEN** a refresh returns no visible pipeline in a running or pending state
-- **THEN** the system stops automatic pipeline-list refresh
+- **THEN** the system slows automatic pipeline-list refresh to the bounded watch interval
+
+#### Scenario: New pipeline starts while watching
+- **WHEN** automatic refresh is slowed to the watch interval and the operator starts a new pipeline from outside the TUI
+- **THEN** the new pipeline appears in the list within one successful watch refresh without manual navigation
 
 ### Requirement: Preserve list interaction during refresh
 An automatic refresh SHALL preserve the selected pipeline by identity when it is still present. A failed background refresh MUST keep the last successful list visible and MUST NOT turn the screen into a fatal error.
@@ -38,10 +42,10 @@ When GitLab rate-limits an automatic pipeline-list refresh, the system SHALL inc
 - **THEN** subsequent active-pipeline refreshes use the normal interval
 
 ### Requirement: Manual list refresh
-Pressing the refresh key on the pipeline list SHALL trigger an immediate one-shot refresh regardless of whether automatic refresh is running or stopped. A manual refresh SHALL preserve selection and MUST NOT turn the screen into a fatal error.
+Pressing the refresh key on the pipeline list SHALL trigger an immediate one-shot refresh regardless of the current refresh cadence. A manual refresh SHALL preserve selection and MUST NOT turn the screen into a fatal error.
 
-#### Scenario: Manual refresh after automatic refresh stopped
-- **WHEN** automatic refresh has stopped because no visible pipeline is active and the operator presses the refresh key
+#### Scenario: Manual refresh at the watch interval
+- **WHEN** automatic refresh is slowed to the watch interval and the operator presses the refresh key
 - **THEN** a fresh list fetch replaces the rows with selection preserved
 
 #### Scenario: Manual refresh fails

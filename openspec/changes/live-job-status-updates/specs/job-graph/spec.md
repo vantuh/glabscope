@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Poll while the pipeline is active
-While the selected pipeline's status is running or pending, the system SHALL refresh job statuses, dependency edges, and pipeline status on a bounded interval. Refresh MUST pause while the job log screen is open and MUST stop when the pipeline reaches a terminal status. If GitLab rate-limits a refresh, the system SHALL increase the delay up to a bounded maximum and SHALL restore the normal interval after a successful refresh. A failed background refresh MUST keep the last successful graph visible and MUST NOT prevent navigation.
+While the selected pipeline's status is running or pending, the system SHALL refresh job statuses, dependency edges, and pipeline status on a bounded interval. When the pipeline is terminal, the system SHALL slow automatic refresh to a bounded watch interval instead of stopping, so externally retried or created jobs still appear. Refresh MUST pause while the job log screen is open. If GitLab rate-limits a refresh, the system SHALL increase the delay up to a bounded maximum and SHALL restore the normal interval after a successful refresh. A failed background refresh MUST keep the last successful graph visible and MUST NOT prevent navigation.
 
 #### Scenario: Running pipeline
 - **WHEN** the operator stays on the graph of a running or pending pipeline
@@ -21,7 +21,11 @@ While the selected pipeline's status is running or pending, the system SHALL ref
 
 #### Scenario: Finished pipeline
 - **WHEN** a graph refresh reports that the pipeline reached a terminal status
-- **THEN** the refreshed terminal state remains visible and further automatic graph refresh stops
+- **THEN** the refreshed terminal state remains visible and automatic graph refresh slows to the bounded watch interval
+
+#### Scenario: Job retried while watching
+- **WHEN** the pipeline is terminal, automatic refresh is slowed to the watch interval, and the operator retries a job from outside the TUI
+- **THEN** the new job attempt appears in the graph within one successful watch refresh without manual navigation
 
 #### Scenario: Graph refresh is rate-limited
 - **WHEN** an automatic graph refresh receives a rate-limit response
@@ -38,11 +42,11 @@ While the selected pipeline's status is running or pending, the system SHALL ref
 ## ADDED Requirements
 
 ### Requirement: Manual graph refresh
-Pressing the refresh key on the graph SHALL trigger an immediate one-shot graph refresh, including while automatic refresh is stopped after a terminal pipeline. The focused job SHALL be preserved across the refreshed graph and a failed manual refresh MUST keep the graph visible with a non-fatal warning.
+Pressing the refresh key on the graph SHALL trigger an immediate one-shot graph refresh regardless of the current refresh cadence. The focused job SHALL be preserved across the refreshed graph and a failed manual refresh MUST keep the graph visible with a non-fatal warning.
 
-#### Scenario: Retry creates a new job after polling stopped
-- **WHEN** automatic graph refresh has stopped after a terminal pipeline and the operator retries a job in GitLab, then presses the refresh key
-- **THEN** the refreshed graph includes the new job attempt
+#### Scenario: Manual refresh at the watch interval
+- **WHEN** automatic graph refresh is slowed to the watch interval and the operator presses the refresh key
+- **THEN** a fresh graph fetch replaces the graph with the focused job preserved
 
 #### Scenario: Manual graph refresh fails
 - **WHEN** a manual graph refresh fails

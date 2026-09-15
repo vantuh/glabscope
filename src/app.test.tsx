@@ -16,8 +16,10 @@ let traceStdout: Uint8Array | null = null;
 let listCalls = 0;
 let listScript: (PipelineRow[] | Error)[] = [];
 let listDefault: PipelineRow[] = [];
+let listFallback: PipelineRow[] | null = null;
 let listGate: PromiseWithResolvers<PipelineRow[]> | null = null;
 let graphScript: (PipelineGraph | Error)[] = [];
+let graphFallback: PipelineGraph | null = null;
 
 function sampleGraph(): PipelineGraph {
   return {
@@ -191,6 +193,8 @@ beforeEach(() => {
   ];
   graphScript = [];
   listGate = null;
+  listFallback = null;
+  graphFallback = null;
 
   spyOn(probeModule, "probeGlab").mockResolvedValue({ ok: true });
   spyOn(listModule, "listPipelines").mockImplementation(() => {
@@ -205,8 +209,13 @@ beforeEach(() => {
       if (next instanceof Error) {
         return Promise.reject(next);
       }
-      return Promise.resolve(next ?? listDefault);
+      if (next) {
+        listFallback = next;
+        return Promise.resolve(next);
+      }
+      return Promise.resolve(listFallback ?? listDefault);
     }
+    listFallback = listDefault;
     return Promise.resolve(listDefault);
   });
   spyOn(graphModule, "fetchPipelineGraph").mockImplementation((iid: string) => {
@@ -215,7 +224,11 @@ beforeEach(() => {
     if (next instanceof Error) {
       return Promise.reject(next);
     }
-    return next ? Promise.resolve(next) : graphGate.promise;
+    if (next) {
+      graphFallback = next;
+      return Promise.resolve(next);
+    }
+    return graphFallback ? Promise.resolve(graphFallback) : graphGate.promise;
   });
   spyOn(traceModule, "spawnTrace").mockImplementation(() => {
     spawnCalls += 1;
@@ -572,7 +585,11 @@ function capturePollTimers() {
     ...args: unknown[]
   ) => {
     scheduled.push(timeout ?? 0);
-    return realSetTimeout(handler, Math.min(timeout ?? 0, 20), ...args);
+    // Compress poll cadence: the 4s active interval fires within ~20ms;
+    // 5s watch and longer backoff delays fire within ~100ms. Raw delays
+    // stay readable for assertions.
+    const ms = (timeout ?? 0) >= 5000 ? 100 : Math.min(timeout ?? 0, 20);
+    return realSetTimeout(handler, ms, ...args);
   }) as unknown as typeof setTimeout);
   return { scheduled, spy };
 }
@@ -605,17 +622,38 @@ test("list with a running pipeline refreshes immediately, keeps scheduling, and 
   }
 });
 
-test("list refresh stops once every visible row is terminal", async () => {
+test("list refresh slows to the watch interval once every visible row is terminal", async () => {
+  const { scheduled } = capturePollTimers();
   listDefault = [runningRow(42, 5)];
   listScript = [[row(43, 4, "success"), row(44, 3, "success")]];
   const setup = await testRender(<App />, { width: 60, height: 12 });
   try {
     await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
     await waitFor(() => listCalls >= 2, "refresh with terminal results");
-    const stopped = listCalls;
-    await Bun.sleep(80);
-    await setup.renderOnce();
-    expect(listCalls).toBe(stopped);
+    // The loop keeps watching at the slow interval instead of stopping.
+    await waitFor(() => pollDelays(scheduled).includes(5000), "watch interval scheduled");
+    const during = listCalls;
+    await Bun.sleep(250);
+    expect(listCalls).toBeGreaterThan(during);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("watch refresh discovers a new pipeline started while everything was terminal", async () => {
+  const { scheduled } = capturePollTimers();
+  listDefault = [row(43, 4, "success"), row(44, 3, "success")];
+  listScript = [[row(43, 4, "success"), row(44, 3, "success"), runningRow(45, 5)]];
+  const setup = await testRender(<App />, { width: 60, height: 12 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("#45") && frame.includes("running"),
+      "newly started pipeline discovered",
+    );
+    expect(pollDelays(scheduled)[0]).toBe(5000);
+    expect(pollDelays(scheduled)[1]).toBe(4000);
   } finally {
     setup.renderer.destroy();
   }
@@ -740,8 +778,8 @@ test("graph polling updates job status and recovers from an ordinary failure", a
   }
 });
 
-test("graph polling pauses during logs, resumes on return, and stops at a terminal refresh", async () => {
-  capturePollTimers();
+test("graph polling pauses during logs, resumes on return, and slows to the watch interval", async () => {
+  const { scheduled } = capturePollTimers();
   listDefault = [runningRow(42, 5)];
   graphGate.resolve(graphFor("RUNNING", [jobIn("build", "99", "running")]));
   const setup = await testRender(<App />, { width: 60, height: 12 });
@@ -766,10 +804,19 @@ test("graph polling pauses during logs, resumes on return, and stops at a termin
     setup.mockInput.pressEscape();
     await waitForFrame(setup, (frame) => frame.includes("[build]"), "graph after return");
     await waitFor(() => fetchGraphCalls.length >= paused + 2, "resumed polling");
-    const stopped = fetchGraphCalls.length;
-    await Bun.sleep(80);
-    await setup.renderOnce();
-    expect(fetchGraphCalls.length).toBe(stopped);
+    // A terminal refresh slows the loop to the watch interval; polling keeps
+    // going so externally retried jobs still appear.
+    await waitFor(() => pollDelays(scheduled).includes(5000), "watch interval scheduled");
+    const during = fetchGraphCalls.length;
+    await Bun.sleep(250);
+    expect(fetchGraphCalls.length).toBeGreaterThan(during);
+
+    // Leaving the graph screen stops its loop entirely.
+    setup.mockInput.pressEscape();
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "back to list");
+    const after = fetchGraphCalls.length;
+    await Bun.sleep(250);
+    expect(fetchGraphCalls.length).toBe(after);
   } finally {
     setup.renderer.destroy();
   }
@@ -891,6 +938,37 @@ test("the footer shows a refreshing spinner while a background refresh is in fli
       setup,
       (frame) => !frame.includes("refreshing…"),
       "refresh status cleared",
+    );
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("watch refresh discovers a job retried while the pipeline was terminal", async () => {
+  const { scheduled } = capturePollTimers();
+  graphGate.resolve(
+    graphFor("SUCCESS", [jobIn("build", "99", "success")]),
+  );
+  const setup = await testRender(<App />, { width: 60, height: 12 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("[build]"), "terminal graph");
+    await waitFor(() => pollDelays(scheduled).includes(5000), "watch interval scheduled");
+    graphScript = [
+      graphFor("RUNNING", [
+        jobIn("build", "99", "success"),
+        jobIn("build", "101", "running"),
+      ]),
+    ];
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("[build]") && frame.split("[build]").length >= 3,
+      "retried job attempt discovered",
+    );
+    await waitFor(
+      () => pollDelays(scheduled).some((delay, index) => delay === 5000 && pollDelays(scheduled)[index + 1] === 4000),
+      "interval back to normal after discovery",
     );
   } finally {
     setup.renderer.destroy();

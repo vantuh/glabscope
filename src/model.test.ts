@@ -100,7 +100,7 @@ test("logsReady clears leftover SGR from a previous job", () => {
   expect(model.logTrace.runs).toEqual([{ text: "plain", bold: false }]);
 });
 
-test("polling is only on the graph of an active pipeline", () => {
+test("graph polling runs on the graph screen whenever a graph is loaded", () => {
   const running = reduce(emptyModel, {
     type: "openGraph",
     graph: graph([job("a")], "RUNNING"),
@@ -108,22 +108,24 @@ test("polling is only on the graph of an active pipeline", () => {
   expect(shouldPollGraph(running)).toBe(true);
   const openingLogs = reduce(running, { type: "openLogs" });
   expect(shouldPollGraph(reduce(openingLogs, { type: "logsReady" }))).toBe(false);
+  expect(shouldPollGraph(reduce(running, { type: "back" }))).toBe(false);
+  // Terminal graphs keep watching (at the slower watch interval).
   expect(
     shouldPollGraph(reduce(emptyModel, { type: "openGraph", graph: graph([job("a")], "SUCCESS") })),
-  ).toBe(false);
-  expect(shouldPollGraph(reduce(running, { type: "back" }))).toBe(false);
+  ).toBe(true);
 });
 
-test("list polling only on the list screen with an active pipeline", () => {
+test("list polling runs on the list screen whenever rows exist", () => {
   const active = reduce(emptyModel, {
     type: "pipelines",
     pipelines: [pipeline(30, 3, "success"), pipeline(20, 2, "running")],
   });
   expect(shouldPollList(active)).toBe(true);
   expect(shouldPollList(reduce(active, { type: "openGraph", graph: graph([job("a")]) }))).toBe(false);
+  // Terminal-only rows keep watching (at the slower watch interval).
   expect(
     shouldPollList(reduce(emptyModel, { type: "pipelines", pipelines: [pipeline(1, 1), pipeline(2, 2, "failed")] })),
-  ).toBe(false);
+  ).toBe(true);
   const navigating = reduce(active, {
     type: "startNavigating",
     target: { kind: "graph", pipelineIid: "2" },
