@@ -48,16 +48,51 @@ The operator SHALL move focus among job nodes and confirm the focused job to ope
 - **THEN** the system clears the loading indicator and shows the error, and the operator can confirm a job again
 
 ### Requirement: Poll while the pipeline is active
-While the selected pipeline’s status is running or pending, the system SHALL refresh job statuses and edges on an interval with backoff if the GitLab API rate-limits. Refresh MUST pause while the job log screen is open. When the pipeline is finished, the system MUST stop polling.
+While the selected pipeline's status is running or pending, the system SHALL refresh job statuses, dependency edges, and pipeline status on a bounded interval. When the pipeline is terminal, the system SHALL slow automatic refresh to a bounded watch interval instead of stopping, so externally retried or created jobs still appear. Refresh MUST pause while the job log screen is open. If GitLab rate-limits a refresh, the system SHALL increase the delay up to a bounded maximum and SHALL restore the normal interval after a successful refresh. A failed background refresh MUST keep the last successful graph visible and MUST NOT prevent navigation.
 
 #### Scenario: Running pipeline
-- **WHEN** the operator stays on the graph of a running pipeline
-- **THEN** node colors update as jobs change status without a manual reload
+- **WHEN** the operator stays on the graph of a running or pending pipeline
+- **THEN** node colors and pipeline status update within one successful refresh interval as GitLab state changes
+
+#### Scenario: Job reaches terminal state
+- **WHEN** an active job completes while the operator remains on the graph
+- **THEN** the job node reflects its terminal status within one successful refresh interval without manual navigation
 
 #### Scenario: Log screen open
 - **WHEN** the operator is on the job log screen
 - **THEN** the graph does not keep polling until they return
 
+#### Scenario: Return from log screen
+- **WHEN** the operator returns from the job log screen to an active pipeline graph
+- **THEN** automatic graph refresh resumes without requiring a manual reload
+
 #### Scenario: Finished pipeline
-- **WHEN** the pipeline reaches a terminal status
-- **THEN** automatic graph refresh stops
+- **WHEN** a graph refresh reports that the pipeline reached a terminal status
+- **THEN** the refreshed terminal state remains visible and automatic graph refresh slows to the bounded watch interval
+
+#### Scenario: Job retried while watching
+- **WHEN** the pipeline is terminal, automatic refresh is slowed to the watch interval, and the operator retries a job from outside the TUI
+- **THEN** the new job attempt appears in the graph within one successful watch refresh without manual navigation
+
+#### Scenario: Graph refresh is rate-limited
+- **WHEN** an automatic graph refresh receives a rate-limit response
+- **THEN** the next refresh is scheduled later than the normal interval without discarding the current graph
+
+#### Scenario: Graph refresh recovers
+- **WHEN** a graph refresh succeeds after one or more rate-limit responses
+- **THEN** subsequent active-pipeline refreshes use the normal interval
+
+#### Scenario: Graph refresh fails
+- **WHEN** an automatic graph refresh fails for a reason other than rate limiting
+- **THEN** the last successful graph remains navigable and a non-fatal refresh error is shown
+
+### Requirement: Manual graph refresh
+Pressing the refresh key on the graph SHALL trigger an immediate one-shot graph refresh regardless of the current refresh cadence. The focused job SHALL be preserved across the refreshed graph and a failed manual refresh MUST keep the graph visible with a non-fatal warning.
+
+#### Scenario: Manual refresh at the watch interval
+- **WHEN** automatic graph refresh is slowed to the watch interval and the operator presses the refresh key
+- **THEN** a fresh graph fetch replaces the graph with the focused job preserved
+
+#### Scenario: Manual graph refresh fails
+- **WHEN** a manual graph refresh fails
+- **THEN** the previous graph remains navigable and a non-fatal refresh warning is shown
