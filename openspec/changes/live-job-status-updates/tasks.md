@@ -21,3 +21,7 @@
 
 - [x] 4.1 Run `bun test` and verify the full suite passes with no new dependency or GitLab client added.
 - [ ] 4.2 Manually run the TUI against an active pipeline and verify both list and graph statuses update, graph polling pauses during logs, terminal polling stops, and keyboard navigation remains usable.
+
+## 5. Manual Refresh
+
+- [ ] 5.1 Add a manual refresh key (`r`) for the list and graph screens performing a one-shot fetch with loading feedback and non-fatal failure handling; verify application tests cover refresh after terminal stop, preserved selection/focus, and failure warnings.

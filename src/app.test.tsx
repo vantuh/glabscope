@@ -648,16 +648,23 @@ test("a missing selected pipeline clamps selection and keeps navigation working"
 
 test("a background list failure keeps the list visible, retries, and clears the warning on recovery", async () => {
   capturePollTimers();
-  listDefault = [runningRow(42, 5)];
+  listDefault = [runningRow(42, 5), row(43, 4, "success")];
   listScript = [new Error("list failed"), new Error("list failed")];
   const setup = await testRender(<App />, { width: 60, height: 12 });
   try {
     await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
-    // The warning renders inline while the last successful rows stay usable.
+    // The warning renders inline while the last successful rows stay usable,
+    // and keyboard navigation still works while the warning shows.
     await waitForFrame(
       setup,
       (frame) => frame.includes("#42") && frame.includes("list failed"),
       "warning beside the retained list",
+    );
+    setup.mockInput.pressKey("ARROW_DOWN");
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("> #43") && frame.includes("list failed"),
+      "navigation during warning",
     );
     // The retry at the bounded delay succeeds and clears the warning.
     await waitForFrame(
@@ -712,7 +719,7 @@ test("graph polling updates job status and recovers from an ordinary failure", a
       "non-fatal refresh warning beside the retained graph",
     );
 
-    graphScript = [graphFor("RUNNING", [jobIn("build", "99", "success")])];
+    graphScript = [graphFor("SUCCESS", [jobIn("build", "99", "success")])];
     await waitForFrame(setup, (frame) => !frame.includes("graphql failed"), "recovered graph");
     const buildSpan = setup
       .captureSpans()
@@ -795,6 +802,65 @@ test("graph refresh backs off on 429, resets after success, and keeps focus acro
       },
       "reordered jobs with preserved focus",
     );
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("r refetches the list after automatic refresh stopped and preserves selection", async () => {
+  listDefault = [row(42, 5, "success")];
+  listScript = [[row(42, 5, "success"), row(43, 4, "success", "failed")]];
+  const setup = await testRender(<App />, { width: 60, height: 12 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    const callsBefore = listCalls;
+    setup.mockInput.pressKey("r");
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("#43") && frame.includes("> #42"),
+      "manually refreshed list with preserved selection",
+    );
+    expect(listCalls).toBe(callsBefore + 1);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a failed manual list refresh keeps the rows and shows a warning", async () => {
+  listDefault = [row(42, 5, "success")];
+  listScript = [new Error("manual refresh failed")];
+  const setup = await testRender(<App />, { width: 60, height: 12 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    setup.mockInput.pressKey("r");
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("#42") && frame.includes("manual refresh failed"),
+      "warning beside retained rows",
+    );
+    expect(listCalls).toBe(2);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("r refetches the graph after polling stopped and shows new jobs", async () => {
+  graphGate.resolve(sampleGraph());
+  const setup = await testRender(<App />, { width: 60, height: 12 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("[build]"), "terminal graph");
+    const callsBefore = fetchGraphCalls.length;
+    graphScript = [
+      graphFor("SUCCESS", [
+        jobIn("build", "99", "success"),
+        jobIn("deploy", "100", "success"),
+      ]),
+    ];
+    setup.mockInput.pressKey("r");
+    await waitForFrame(setup, (frame) => frame.includes("[deploy]"), "graph with retried-in job");
+    expect(fetchGraphCalls.length).toBe(callsBefore + 1);
   } finally {
     setup.renderer.destroy();
   }

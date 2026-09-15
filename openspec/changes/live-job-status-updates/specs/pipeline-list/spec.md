@@ -36,3 +36,14 @@ When GitLab rate-limits an automatic pipeline-list refresh, the system SHALL inc
 #### Scenario: Refresh recovers
 - **WHEN** a refresh succeeds after one or more rate-limit responses
 - **THEN** subsequent active-pipeline refreshes use the normal interval
+
+### Requirement: Manual list refresh
+Pressing the refresh key on the pipeline list SHALL trigger an immediate one-shot refresh regardless of whether automatic refresh is running or stopped. A manual refresh SHALL preserve selection and MUST NOT turn the screen into a fatal error.
+
+#### Scenario: Manual refresh after automatic refresh stopped
+- **WHEN** automatic refresh has stopped because no visible pipeline is active and the operator presses the refresh key
+- **THEN** a fresh list fetch replaces the rows with selection preserved
+
+#### Scenario: Manual refresh fails
+- **WHEN** a manual list refresh fails
+- **THEN** the previous rows remain visible with a non-fatal refresh warning

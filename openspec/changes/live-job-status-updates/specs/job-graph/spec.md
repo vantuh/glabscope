@@ -34,3 +34,14 @@ While the selected pipeline's status is running or pending, the system SHALL ref
 #### Scenario: Graph refresh fails
 - **WHEN** an automatic graph refresh fails for a reason other than rate limiting
 - **THEN** the last successful graph remains navigable and a non-fatal refresh error is shown
+
+### Requirement: Manual graph refresh
+Pressing the refresh key on the graph SHALL trigger an immediate one-shot graph refresh, including while automatic refresh is stopped after a terminal pipeline. The focused job SHALL be preserved across the refreshed graph and a failed manual refresh MUST keep the graph visible with a non-fatal warning.
+
+#### Scenario: Retry creates a new job after polling stopped
+- **WHEN** automatic graph refresh has stopped after a terminal pipeline and the operator retries a job in GitLab, then presses the refresh key
+- **THEN** the refreshed graph includes the new job attempt
+
+#### Scenario: Manual graph refresh fails
+- **WHEN** a manual graph refresh fails
+- **THEN** the previous graph remains navigable and a non-fatal refresh warning is shown

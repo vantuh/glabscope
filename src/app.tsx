@@ -293,6 +293,17 @@ export function App() {
       return;
     }
     if (model.screen === "list") {
+      if (key.name === "r" && navigatingRef.current === null && !model.manualRefresh) {
+        dispatch({ type: "manualRefresh", target: "list" });
+        void listPipelines()
+          .then((rows) => dispatch({ type: "pipelines", pipelines: rows }))
+          .catch((error: unknown) =>
+            dispatch({
+              type: "refreshError",
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
+      }
       if (key.name === "up") {
         dispatch({ type: "moveList", delta: -1 });
       }
@@ -327,6 +338,17 @@ export function App() {
       }
     }
     if (model.screen === "graph" && dag) {
+      if (model.graph && key.name === "r" && navigatingRef.current === null && !model.manualRefresh) {
+        dispatch({ type: "manualRefresh", target: "graph" });
+        void fetchPipelineGraph(model.graph.iid)
+          .then((graph) => dispatch({ type: "refreshGraph", graph }))
+          .catch((error: unknown) =>
+            dispatch({
+              type: "refreshError",
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
+      }
       const order = visualJobs(dag);
       const currentId = focusedJob(model)?.id;
       const index = Math.max(0, order.findIndex((job) => job.id === currentId));
@@ -404,8 +426,14 @@ export function App() {
     return (
       <ScreenPanel
         title={`pipeline ${model.graph?.iid ?? ""}`}
-        footer="arrows move  enter log  esc list  q quit"
-        loadingLabel={model.navigating?.kind === "logs" ? "Loading log…" : undefined}
+        footer="arrows move  enter log  r refresh  esc list  q quit"
+        loadingLabel={
+          model.navigating?.kind === "logs"
+            ? "Loading log…"
+            : model.manualRefresh === "graph"
+              ? "Refreshing…"
+              : undefined
+        }
       >
         {model.refreshWarning ? (
           <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
@@ -427,8 +455,14 @@ export function App() {
   return (
     <ScreenPanel
       title="pipelines"
-      footer="enter graph  q quit"
-      loadingLabel={model.navigating?.kind === "graph" ? "Loading pipeline…" : undefined}
+      footer="enter graph  r refresh  q quit"
+      loadingLabel={
+        model.navigating?.kind === "graph"
+          ? "Loading pipeline…"
+          : model.manualRefresh === "list"
+            ? "Refreshing…"
+            : undefined
+      }
     >
       {model.refreshWarning ? (
         <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>

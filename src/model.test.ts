@@ -296,3 +296,15 @@ test("refreshGraph preserves the focused job when refreshed jobs are reordered",
   });
   expect(focusedJob(model)?.id).toBe("b");
 });
+
+test("manual refresh flag is set by the action and cleared by outcomes", () => {
+  let model = reduce(emptyModel, { type: "pipelines", pipelines: [pipeline(1, 1)] });
+  model = reduce(model, { type: "manualRefresh", target: "list" });
+  expect(model.manualRefresh).toBe("list");
+  model = reduce(model, { type: "pipelines", pipelines: [pipeline(1, 1)] });
+  expect(model.manualRefresh).toBeNull();
+  model = reduce(model, { type: "manualRefresh", target: "graph" });
+  model = reduce(model, { type: "refreshError", message: "refresh failed" });
+  expect(model.manualRefresh).toBeNull();
+  expect(model.refreshWarning).toBe("refresh failed");
+});

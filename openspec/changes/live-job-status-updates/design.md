@@ -43,6 +43,13 @@ A 429 doubles the current delay up to 30 seconds. Any successful refresh resets 
 
 Alternative: stopping on the first transient error leaves the screen stale. Treating a background failure as fatal discards usable state.
 
+### Refresh manually after polling stopped
+Pressing `r` on the list or graph triggers a one-shot refresh of the visible screen's data, regardless of whether automatic refresh is running or stopped after a terminal pipeline. The refresh reuses the existing reconciliation (selection by pipeline id, focus by job id) and the non-fatal warning path, and a loading overlay provides feedback while the subprocess runs.
+
+Rationale: automatic polling stops when a pipeline is terminal, so externally triggered changes such as a GitLab job retry are invisible until the operator acts. A manual keypress is the cheapest wake-up that preserves the terminal-stop rule and keeps steady-state API traffic at zero for finished pipelines.
+
+Alternative considered: a slow watch poll after the pipeline goes terminal would detect retries automatically but permanently costs API calls for finished pipelines and weakens the explicit stop rule, so it stays out of scope.
+
 ### Keep push delivery outside this change
 
 GitLab's `ciJobStatusUpdated` subscription is job-scoped; `ciJobProcessed` can be project-scoped but is version/feature-flag dependent. Both require a persistent Action Cable WebSocket client that `glab` does not expose. A thin event-triggered refetch would be reasonable only after a separate change explicitly expands the GitLab I/O boundary and defines authentication, compatibility probing, reconnect behavior, and polling fallback.

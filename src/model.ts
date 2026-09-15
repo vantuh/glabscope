@@ -15,6 +15,8 @@ export type AppModel = {
   errorFatal: boolean;
   /** Non-fatal background-refresh failure message; data stays visible. */
   refreshWarning: string | null;
+  /** One-shot manual refresh in flight, per screen. */
+  manualRefresh: "list" | "graph" | null;
   booted: boolean;
   pipelines: PipelineRow[];
   selectedIndex: number;
@@ -32,6 +34,7 @@ export const emptyModel: AppModel = {
   error: null,
   errorFatal: false,
   refreshWarning: null,
+  manualRefresh: null,
   booted: false,
   pipelines: [],
   selectedIndex: 0,
@@ -52,6 +55,7 @@ export type Action =
   | { type: "openGraph"; graph: PipelineGraph }
   | { type: "refreshGraph"; graph: PipelineGraph }
   | { type: "refreshError"; message: string }
+  | { type: "manualRefresh"; target: "list" | "graph" }
   | { type: "focusJob"; id: string }
   | { type: "openLogs" }
   | { type: "logsReady" }
@@ -113,16 +117,16 @@ export function reduce(model: AppModel, action: Action): AppModel {
         ...model,
         error: action.message,
         errorFatal: action.fatal ?? false,
+        manualRefresh: null,
         booted: true,
         navigating: null,
       };
     case "pipelines":
       return {
         ...model,
-        error: null,
-        errorFatal: false,
         booted: true,
         refreshWarning: null,
+        manualRefresh: null,
         pipelines: action.pipelines,
         selectedIndex: reconcileSelectedIndex(model, action.pipelines),
       };
@@ -144,11 +148,13 @@ export function reduce(model: AppModel, action: Action): AppModel {
         focusedJobIndex: 0,
         error: null,
         errorFatal: false,
+        refreshWarning: null,
+        manualRefresh: null,
         navigating: null,
       };
     case "refreshGraph": {
       if (model.screen === "logs") {
-        return { ...model, graph: action.graph, refreshWarning: null };
+        return { ...model, graph: action.graph, refreshWarning: null, manualRefresh: null };
       }
       const currentId = focusedJob(model)?.id;
       return {
@@ -156,10 +162,13 @@ export function reduce(model: AppModel, action: Action): AppModel {
         graph: action.graph,
         focusedJobIndex: focusIndexForId(action.graph, currentId),
         refreshWarning: null,
+        manualRefresh: null,
       };
     }
     case "refreshError":
-      return { ...model, refreshWarning: action.message };
+      return { ...model, refreshWarning: action.message, manualRefresh: null };
+    case "manualRefresh":
+      return { ...model, manualRefresh: action.target };
     case "focusJob": {
       const index = model.graph?.jobs.findIndex((job) => job.id === action.id) ?? -1;
       if (index < 0) {
@@ -199,10 +208,10 @@ export function reduce(model: AppModel, action: Action): AppModel {
       return { ...model, logDone: true };
     case "back":
       if (model.error && !model.errorFatal) {
-        return { ...model, error: null };
+        return { ...model, error: null, manualRefresh: null };
       }
       if (model.navigating?.kind === "logs") {
-        return { ...model, navigating: null };
+        return { ...model, navigating: null, manualRefresh: null };
       }
       if (model.screen === "logs") {
         return {
@@ -212,10 +221,16 @@ export function reduce(model: AppModel, action: Action): AppModel {
           logBuffer: model.logBuffer,
           logTrace: model.logTrace,
           logDone: model.logDone,
+          manualRefresh: null,
         };
       }
       if (model.screen === "graph") {
-        return { ...model, screen: "list" };
+        return {
+          ...model,
+          screen: "list",
+          refreshWarning: null,
+          manualRefresh: null,
+        };
       }
       return model;
     default:
