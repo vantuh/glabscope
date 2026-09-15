@@ -42,7 +42,7 @@ Alternative: title-only, keys in the first scroll row — rejected because keys 
 List, graph, and logs each get **one** content frame. Nested “list inside outer window” wastes columns in 80×24. Logs are the user’s requested “small frame around the log”; the list/graph use the same pattern so the app is one language.
 
 ### 5. Loading indicator coexistence
-If `add-navigation-loading-spinner` lands first (or second), put the spinner in the **title** or a single line under the title, still inside the frame. Do not remove borders while loading.
+`add-navigation-loading-spinner` has landed with a fullscreen overlay. This change replaces that presentation: put its animated spinner and loading text on a single line under the title, inside the relevant framed panel. Do not remove borders while loading; the row stays visible with the list or graph behind it.
 
 ### 6. Tests
 Extend `@opentui/react/test-utils` `captureCharFrame()` assertions: list/graph/log/boot/error frames contain box-drawing / rounded corners and the title substring. Keep the existing `q` quit test. Prefer a small helper that renders `App` with a stubbed model if boot-only capture cannot show the list; if that requires model injection that does not exist, add a narrow test-only render of the shell helper with fake children rather than mocking all of glab.
