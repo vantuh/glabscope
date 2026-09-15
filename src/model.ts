@@ -1,7 +1,7 @@
 import type { PipelineRow } from "./glab/list.ts";
 import type { JobNode, PipelineGraph } from "./glab/graph.ts";
 import { isActivePipelineStatus } from "./status.ts";
-import { appendLogBuffer } from "./log-text.ts";
+import { appendLogTrace, emptyLogTrace, logVisibleText, type LogTrace } from "./log-text.ts";
 
 export type Screen = "list" | "graph" | "logs";
 
@@ -20,6 +20,7 @@ export type AppModel = {
   focusedJobIndex: number;
   logJobId: string | null;
   logBuffer: string;
+  logTrace: LogTrace;
   logDone: boolean;
   navigating: Navigating | null;
 };
@@ -35,6 +36,7 @@ export const emptyModel: AppModel = {
   focusedJobIndex: 0,
   logJobId: null,
   logBuffer: "",
+  logTrace: emptyLogTrace(),
   logDone: false,
   navigating: null,
 };
@@ -159,12 +161,15 @@ export function reduce(model: AppModel, action: Action): AppModel {
         screen: "logs",
         logJobId: model.navigating.jobId,
         logBuffer: "",
+        logTrace: emptyLogTrace(),
         logDone: false,
         navigating: null,
       };
     }
-    case "logChunk":
-      return { ...model, logBuffer: appendLogBuffer(model.logBuffer, action.chunk) };
+    case "logChunk": {
+      const logTrace = appendLogTrace(model.logTrace, action.chunk);
+      return { ...model, logTrace, logBuffer: logVisibleText(logTrace) };
+    }
     case "logDone":
       return { ...model, logDone: true };
     case "back":
@@ -180,6 +185,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
           screen: "graph",
           logJobId: null,
           logBuffer: model.logBuffer,
+          logTrace: model.logTrace,
           logDone: model.logDone,
         };
       }

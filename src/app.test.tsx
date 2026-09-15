@@ -10,6 +10,7 @@ let graphGate = Promise.withResolvers<PipelineGraph>();
 let spawnCalls = 0;
 let spawnShouldThrow = false;
 let traceStaysLive = false;
+let traceStdout: Uint8Array | null = null;
 
 function sampleGraph(): PipelineGraph {
   return {
@@ -41,9 +42,23 @@ function closedStream() {
   });
 }
 
+function bytesStream(bytes: Uint8Array) {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
 function fakeProc(): ReturnType<typeof Bun.spawn> {
+  const stdout = traceStdout
+    ? bytesStream(traceStdout)
+    : traceStaysLive
+      ? new ReadableStream<Uint8Array>({})
+      : closedStream();
   return {
-    stdout: traceStaysLive ? new ReadableStream<Uint8Array>({}) : closedStream(),
+    stdout,
     stderr: traceStaysLive ? new ReadableStream<Uint8Array>({}) : closedStream(),
     exited: traceStaysLive ? new Promise(() => {}) : Promise.resolve(0),
     kill() {},
@@ -154,6 +169,7 @@ beforeEach(() => {
   spawnCalls = 0;
   spawnShouldThrow = false;
   traceStaysLive = false;
+  traceStdout = null;
 
   spyOn(probeModule, "probeGlab").mockResolvedValue({ ok: true });
   spyOn(listModule, "listPipelines").mockResolvedValue([
@@ -386,6 +402,30 @@ test("live log chrome keeps the waiting message inside the panel", async () => {
     expect(frame).toContain("log build");
     expect(frame).toContain("waiting for glab ci trace…");
     expect(frame).toMatch(/[╭╮╰╯]/);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("log panel paints SGR red and leaves unstyled ERROR default", async () => {
+  const setup = await mountApp();
+  try {
+    await openGraph(setup);
+    traceStdout = new TextEncoder().encode("\u001b[31mFAIL\u001b[0m\nERROR: boom\n");
+    setup.mockInput.pressEnter();
+    const frame = await waitForFrame(
+      setup,
+      (text) => text.includes("FAIL") && text.includes("ERROR: boom") && text.includes("ended"),
+      "colored log screen",
+    );
+    expect(frame).toContain("log build");
+    expect(frame).toContain("ended · esc back");
+    expect(frame).toMatch(/[╭╮╰╯]/);
+    const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+    const failSpan = spans.find((span) => span.text.includes("FAIL"));
+    const errorSpan = spans.find((span) => span.text.includes("ERROR"));
+    expect(failSpan?.fg.toInts()).toEqual([128, 0, 0, 255]);
+    expect(errorSpan?.fg.toInts()).not.toEqual([128, 0, 0, 255]);
   } finally {
     setup.renderer.destroy();
   }

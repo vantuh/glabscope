@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { emptyModel, focusedJob, nextPollDelay, reduce, selectedPipeline, shouldPollGraph } from "./model.ts";
+import { emptyLogTrace } from "./log-text.ts";
 import type { JobNode, PipelineGraph } from "./glab/graph.ts";
 import type { PipelineRow } from "./glab/list.ts";
 
@@ -72,14 +73,29 @@ test("log screen stays after tracer exits; back returns to the same job", () => 
   model = reduce(model, { type: "focusJob", id: "b" });
   model = reduce(model, { type: "openLogs" });
   model = reduce(model, { type: "logsReady" });
-  model = reduce(model, { type: "logChunk", chunk: "hello\n" });
+  model = reduce(model, { type: "logChunk", chunk: "\u001b[31mhello\n" });
   model = reduce(model, { type: "logDone" });
   expect(model.screen).toBe("logs");
   expect(model.logDone).toBe(true);
   expect(model.logBuffer).toContain("hello");
+  expect(model.logBuffer).not.toContain("\u001b");
   model = reduce(model, { type: "back" });
   expect(model.screen).toBe("graph");
   expect(focusedJob(model)?.name).toBe("b");
+});
+
+test("logsReady clears leftover SGR from a previous job", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graph([job("a")]) });
+  model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "logsReady" });
+  model = reduce(model, { type: "logChunk", chunk: "\u001b[31" });
+  expect(model.logTrace.leftover).toBe("\u001b[31");
+  model = reduce(model, { type: "back" });
+  model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "logsReady" });
+  expect(model.logTrace).toEqual(emptyLogTrace());
+  model = reduce(model, { type: "logChunk", chunk: "plain" });
+  expect(model.logTrace.runs).toEqual([{ text: "plain", bold: false }]);
 });
 
 test("polling delay backs off on 429", () => {

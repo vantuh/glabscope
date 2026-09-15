@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { TextAttributes } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import {
   emptyModel,
@@ -329,7 +330,20 @@ export function App() {
         footer={`${model.logDone ? "ended" : "live"} · esc back`}
       >
         <scrollbox focused flexGrow={1} stickyScroll>
-          <text>{model.logBuffer || "waiting for glab ci trace…"}</text>
+          <text>
+            {model.logTrace.runs.length === 0
+              ? "waiting for glab ci trace…"
+              : model.logTrace.runs.map((run, index) => (
+                  <span
+                    key={index}
+                    fg={run.fg}
+                    bg={run.bg}
+                    attributes={run.bold ? TextAttributes.BOLD : TextAttributes.NONE}
+                  >
+                    {run.text}
+                  </span>
+                ))}
+          </text>
         </scrollbox>
       </ScreenPanel>
     );
