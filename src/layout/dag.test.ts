@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import type { JobNode } from "../glab/graph.ts";
+import { parsePipelineGraph } from "../glab/graph.ts";
+import fixture from "../fixtures/pipeline-jobs-needs.json";
 import { buildDag, renderDagAscii } from "./dag.ts";
 
 function job(
@@ -46,4 +48,15 @@ test("viewport clips ASCII output", () => {
   expect(lines).toHaveLength(1);
   expect(lines[0]?.length).toBeLessThanOrEqual(8);
   expect(renderDagAscii(dag, "B", { width: 80, height: 4 }).join("\n")).toContain("[B]");
+  expect(renderDagAscii(dag, "B", { width: 80, height: 4 }).join("\n")).toContain("<- A");
+});
+
+test("real fixture renders only named needs, not positional arrows", () => {
+  const graph = parsePipelineGraph(fixture);
+  const dag = buildDag(graph.jobs);
+  const text = renderDagAscii(dag, undefined, { width: 200, height: 40 }).join("\n");
+  expect(text).not.toContain("-->");
+  expect(text).not.toContain("owasp-dependency-check --> sonarqube");
+  expect(text).toContain("[sonarqube] <- tests");
+  expect(text).toContain("[qualityspy-v2] <- sonarqube, tests");
 });

@@ -72,37 +72,23 @@ export function buildDag(jobs: JobNode[]): RankedDag {
   return { jobs, edges, ranks };
 }
 
+export function formatJobLine(job: JobNode, focusedId: string | undefined): string {
+  const mark = job.id === focusedId ? ">" : " ";
+  const deps =
+    job.needsNames.length > 0 ? ` <- ${job.needsNames.join(", ")}` : "";
+  return `${mark}[${job.name}]${deps}`;
+}
+
+export function visualJobs(dag: RankedDag): JobNode[] {
+  return dag.ranks.flat();
+}
+
 export function renderDagAscii(
   dag: RankedDag,
   focusedId: string | undefined,
   viewport: { width: number; height: number; scrollX?: number; scrollY?: number },
 ): string[] {
-  const colGap = " --> ";
-  const columns = dag.ranks.map((column) =>
-    column.map((job) => {
-      const mark = job.id === focusedId ? ">" : " ";
-      return `${mark}[${job.name}]`;
-    }),
-  );
-  const colWidths = columns.map((column) =>
-    column.reduce((max, line) => Math.max(max, line.length), 2),
-  );
-  const rowCount = Math.max(1, ...columns.map((column) => column.length));
-  const full: string[] = [];
-  for (let row = 0; row < rowCount; row++) {
-    const parts: string[] = [];
-    for (let col = 0; col < columns.length; col++) {
-      const cell = columns[col]?.[row] ?? "";
-      parts.push(cell.padEnd(colWidths[col] ?? 0));
-      if (col < columns.length - 1) {
-        const connect =
-          row === 0 && (dag.ranks[col + 1]?.length ?? 0) > 0 ? colGap : " ".repeat(colGap.length);
-        parts.push(connect);
-      }
-    }
-    full.push(parts.join(""));
-  }
-
+  const full = visualJobs(dag).map((job) => formatJobLine(job, focusedId));
   const scrollX = viewport.scrollX ?? 0;
   const scrollY = viewport.scrollY ?? 0;
   return full
