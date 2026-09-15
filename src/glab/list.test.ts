@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mapPipelines } from "./list.ts";
+import { listPipelines, mapPipelines } from "./list.ts";
 
 test("maps list JSON statuses into four buckets", () => {
   const rows = mapPipelines([
@@ -15,4 +15,8 @@ test("maps list JSON statuses into four buckets", () => {
     "other",
   ]);
   expect(rows[2]?.id).toBe(3);
+});
+
+test("unbound working tree is an error, not an empty list", async () => {
+  await expect(listPipelines(process.cwd())).rejects.toThrow();
 });

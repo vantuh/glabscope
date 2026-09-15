@@ -17,4 +17,4 @@ bun install
 bun start
 ```
 
-Keys: `q` quits.
+Keys: `q` quits, arrows move, Enter drills in, Esc goes back (log → graph → list).

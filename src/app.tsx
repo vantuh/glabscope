@@ -1,39 +1,185 @@
-import { useEffect, useState } from "react";
-import { useKeyboard } from "@opentui/react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
+import { useKeyboard, useTerminalDimensions } from "@opentui/react";
+import { emptyModel, focusedJob, nextPollDelay, reduce, selectedPipeline, shouldPollGraph } from "./model.ts";
 import { isQuitKey } from "./keys.ts";
-import { probeGlab } from "./glab/probe.ts";
+import { glabBin, probeGlab } from "./glab/probe.ts";
+import { listPipelines } from "./glab/list.ts";
+import { fetchPipelineGraph } from "./glab/graph.ts";
+import { traceArgv } from "./glab/trace.ts";
+import { BUCKET_COLOR } from "./status.ts";
+import { buildDag, renderDagAscii } from "./layout/dag.ts";
 
 export function App() {
-  const [error, setError] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
+  const [model, dispatch] = useReducer(reduce, emptyModel);
+  const { width, height } = useTerminalDimensions();
+  const logProc = useRef<ReturnType<typeof Bun.spawn> | null>(null);
 
   useEffect(() => {
-    void probeGlab().then((result) => {
-      if (result.ok) {
-        setReady(true);
+    void (async () => {
+      const probe = await probeGlab();
+      if (!probe.ok) {
+        dispatch({ type: "error", message: probe.message });
         return;
       }
-      setError(result.message);
-    });
+      try {
+        dispatch({ type: "pipelines", pipelines: await listPipelines() });
+      } catch (error) {
+        dispatch({
+          type: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
   }, []);
+
+  useEffect(() => {
+    if (!shouldPollGraph(model)) {
+      return;
+    }
+    const iid = selectedPipeline(model)?.iid;
+    if (iid === undefined) {
+      return;
+    }
+    let delay = 4000;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      if (stopped) {
+        return;
+      }
+      try {
+        const graph = await fetchPipelineGraph(String(iid));
+        dispatch({ type: "refreshGraph", graph });
+        delay = nextPollDelay(delay, false);
+        if (!shouldPollGraph({ ...model, graph, screen: "graph" })) {
+          return;
+        }
+      } catch (error) {
+        const rateLimited = error instanceof Error && error.name === "RateLimitedError";
+        delay = nextPollDelay(delay, rateLimited);
+      }
+      if (!stopped) {
+        timer = setTimeout(() => void tick(), delay);
+      }
+    };
+    void tick();
+    return () => {
+      stopped = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [model.screen, model.graph?.status, model.selectedIndex]);
+
+  useEffect(() => {
+    if (model.screen !== "logs") {
+      logProc.current?.kill();
+      logProc.current = null;
+      return;
+    }
+    const job = focusedJob(model);
+    if (!job) {
+      return;
+    }
+    const proc = Bun.spawn([glabBin(), ...traceArgv(job.numericId)], {
+      cwd: process.cwd(),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    logProc.current = proc;
+    let cancelled = false;
+    const read = async (stream: ReadableStream<Uint8Array>) => {
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      while (!cancelled) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (value) {
+          dispatch({ type: "logChunk", chunk: decoder.decode(value) });
+        }
+      }
+    };
+    void (async () => {
+      await Promise.all([
+        read(proc.stdout as ReadableStream<Uint8Array>),
+        read(proc.stderr as ReadableStream<Uint8Array>),
+      ]);
+      await proc.exited;
+      if (!cancelled) {
+        dispatch({ type: "logDone" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      proc.kill();
+      logProc.current = null;
+    };
+  }, [model.screen, focusedJob(model)?.numericId]);
 
   useKeyboard((key) => {
     if (isQuitKey(key.name)) {
       process.exit(0);
     }
+    if (model.error) {
+      return;
+    }
+    if (key.name === "escape") {
+      dispatch({ type: "back" });
+      return;
+    }
+    if (model.screen === "list") {
+      if (key.name === "up") {
+        dispatch({ type: "moveList", delta: -1 });
+      }
+      if (key.name === "down") {
+        dispatch({ type: "moveList", delta: 1 });
+      }
+      if (key.name === "return") {
+        const row = selectedPipeline(model);
+        if (!row) {
+          return;
+        }
+        void fetchPipelineGraph(String(row.iid))
+          .then((graph) => dispatch({ type: "openGraph", graph }))
+          .catch((error: unknown) =>
+            dispatch({
+              type: "error",
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
+      }
+    }
+    if (model.screen === "graph") {
+      if (key.name === "up" || key.name === "left") {
+        dispatch({ type: "moveJob", delta: -1 });
+      }
+      if (key.name === "down" || key.name === "right") {
+        dispatch({ type: "moveJob", delta: 1 });
+      }
+      if (key.name === "return") {
+        dispatch({ type: "openLogs" });
+      }
+    }
   });
 
-  if (error) {
-    return (
-      <box padding={1}>
-        <text fg="#ff5555">Cannot start</text>
-        <text>{error}</text>
-        <text fg="#888888">q quit</text>
-      </box>
-    );
-  }
+  const dag = useMemo(
+    () => (model.graph ? buildDag(model.graph.jobs) : null),
+    [model.graph],
+  );
+  const dagLines = useMemo(() => {
+    if (!dag) {
+      return [];
+    }
+    return renderDagAscii(dag, focusedJob(model)?.id, {
+      width: Math.max(20, width - 4),
+      height: Math.max(4, height - 8),
+    });
+  }, [dag, model.focusedJobIndex, width, height]);
 
-  if (!ready) {
+  if (!model.booted) {
     return (
       <box padding={1}>
         <text>Checking glab…</text>
@@ -41,10 +187,67 @@ export function App() {
     );
   }
 
+  if (model.error) {
+    return (
+      <box padding={1}>
+        <text fg="#ef4444">Cannot start</text>
+        <text>{model.error}</text>
+        <text fg="#9ca3af">q quit</text>
+      </box>
+    );
+  }
+
+  if (model.screen === "logs") {
+    const job = focusedJob(model);
+    return (
+      <box padding={1} flexDirection="column" flexGrow={1}>
+        <text>
+          log {job?.name} {model.logDone ? "(ended, esc back)" : "(live, esc back)"}
+        </text>
+        <scrollbox focused flexGrow={1}>
+          <text>{model.logBuffer || "waiting for glab ci trace…"}</text>
+        </scrollbox>
+      </box>
+    );
+  }
+
+  if (model.screen === "graph") {
+    return (
+      <box padding={1} flexDirection="column" flexGrow={1}>
+        <text>
+          pipeline iid {selectedPipeline(model)?.iid}  status {model.graph?.status}
+        </text>
+        <text fg="#9ca3af">arrows move  enter log  esc list  q quit</text>
+        <box flexDirection="row">
+          {dag?.ranks.map((column, columnIndex) => (
+            <box key={columnIndex} marginRight={1}>
+              {column.map((job) => (
+                <text key={job.id} fg={BUCKET_COLOR[job.bucket]}>
+                  {job.id === focusedJob(model)?.id ? ">" : " "}[{job.name}]
+                </text>
+              ))}
+            </box>
+          ))}
+        </box>
+        {dagLines.map((line, index) => (
+          <text key={index} fg="#6b7280">
+            {line}
+          </text>
+        ))}
+      </box>
+    );
+  }
+
   return (
-    <box padding={1}>
-      <text>glab-pipeline-viewer</text>
-      <text fg="#888888">q quit</text>
+    <box padding={1} flexDirection="column" flexGrow={1}>
+      <text>pipelines  enter graph  q quit</text>
+      <scrollbox focused flexGrow={1}>
+        {model.pipelines.map((row, index) => (
+          <text key={row.id} fg={BUCKET_COLOR[row.bucket]}>
+            {index === model.selectedIndex ? ">" : " "} #{row.id}  {row.status}  {row.ref}
+          </text>
+        ))}
+      </scrollbox>
     </box>
   );
 }
