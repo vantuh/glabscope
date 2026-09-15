@@ -4,18 +4,20 @@ import { useKeyboard, useRenderer } from "@opentui/react";
 import {
   emptyModel,
   focusedJob,
-  nextPollDelay,
   reduce,
   selectedPipeline,
   shouldPollGraph,
+  shouldPollList,
   tracedJob,
 } from "./model.ts";
+import { NORMAL_POLL_MS, nextPollDelay } from "./polling.ts";
 import { isQuitKey } from "./keys.ts";
 import { probeGlab } from "./glab/probe.ts";
 import { listPipelines } from "./glab/list.ts";
 import { fetchPipelineGraph, NeedsUnavailableError } from "./glab/graph.ts";
+import { RateLimitedError } from "./glab/ratelimit.ts";
 import { spawnTrace } from "./glab/trace.ts";
-import { BUCKET_COLOR } from "./status.ts";
+import { BUCKET_COLOR, isActivePipelineStatus } from "./status.ts";
 import { buildDag, formatJobLine, visualJobs } from "./layout/dag.ts";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -110,6 +112,55 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!shouldPollList(model)) {
+      return;
+    }
+    let delay = NORMAL_POLL_MS;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      if (stopped) {
+        return;
+      }
+      try {
+        const rows = await listPipelines();
+        if (stopped) {
+          return;
+        }
+        dispatch({ type: "pipelines", pipelines: rows });
+        delay = nextPollDelay(delay, false);
+        if (!rows.some((row) => row.bucket === "running-or-pending")) {
+          return;
+        }
+      } catch (error) {
+        if (stopped) {
+          return;
+        }
+        if (error instanceof RateLimitedError) {
+          delay = nextPollDelay(delay, true);
+        } else {
+          dispatch({
+            type: "refreshError",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      if (!stopped) {
+        timer = setTimeout(() => void tick(), delay);
+      }
+    };
+    void tick();
+    return () => {
+      stopped = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+    // The second dependency is a boolean: the loop keeps its own schedule
+    // while active rows remain, and restarts only when eligibility flips.
+  }, [model.screen, shouldPollList(model)]);
+
+  useEffect(() => {
     if (!shouldPollGraph(model)) {
       return;
     }
@@ -117,7 +168,7 @@ export function App() {
     if (iid === undefined) {
       return;
     }
-    let delay = 4000;
+    let delay = NORMAL_POLL_MS;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
@@ -131,23 +182,21 @@ export function App() {
         }
         dispatch({ type: "refreshGraph", graph });
         delay = nextPollDelay(delay, false);
-        if (!shouldPollGraph({ ...model, graph, screen: "graph" })) {
+        if (!isActivePipelineStatus(graph.status)) {
           return;
         }
       } catch (error) {
         if (stopped) {
           return;
         }
-        const rateLimited = error instanceof Error && error.name === "RateLimitedError";
-        if (!rateLimited) {
+        if (error instanceof RateLimitedError) {
+          delay = nextPollDelay(delay, true);
+        } else {
           dispatch({
-            type: "error",
+            type: "refreshError",
             message: error instanceof Error ? error.message : String(error),
-            fatal: false,
           });
-          return;
         }
-        delay = nextPollDelay(delay, true);
       }
       if (!stopped) {
         timer = setTimeout(() => void tick(), delay);

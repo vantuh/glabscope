@@ -1,15 +1,17 @@
 import { expect, test } from "bun:test";
-import { emptyModel, focusedJob, nextPollDelay, reduce, selectedPipeline, shouldPollGraph } from "./model.ts";
+import { emptyModel, focusedJob, reduce, selectedPipeline, shouldPollGraph, shouldPollList } from "./model.ts";
 import { emptyLogTrace } from "./log-text.ts";
 import type { JobNode, PipelineGraph } from "./glab/graph.ts";
 import type { PipelineRow } from "./glab/list.ts";
 
-function pipeline(id: number, iid: number): PipelineRow {
+function pipeline(id: number, iid: number, status = "success"): PipelineRow {
+  const bucket =
+    status === "running" || status === "pending" ? ("running-or-pending" as const) : status === "failed" ? ("failed" as const) : ("success" as const);
   return {
     id,
     iid,
-    status: "success",
-    bucket: "success",
+    status,
+    bucket,
     ref: "main",
     source: "push",
   };
@@ -98,12 +100,6 @@ test("logsReady clears leftover SGR from a previous job", () => {
   expect(model.logTrace.runs).toEqual([{ text: "plain", bold: false }]);
 });
 
-test("polling delay backs off on 429", () => {
-  expect(nextPollDelay(4000, false)).toBe(4000);
-  expect(nextPollDelay(4000, true)).toBe(8000);
-  expect(nextPollDelay(20000, true)).toBe(30000);
-});
-
 test("polling is only on the graph of an active pipeline", () => {
   const running = reduce(emptyModel, {
     type: "openGraph",
@@ -115,6 +111,26 @@ test("polling is only on the graph of an active pipeline", () => {
   expect(
     shouldPollGraph(reduce(emptyModel, { type: "openGraph", graph: graph([job("a")], "SUCCESS") })),
   ).toBe(false);
+  expect(shouldPollGraph(reduce(running, { type: "back" }))).toBe(false);
+});
+
+test("list polling only on the list screen with an active pipeline", () => {
+  const active = reduce(emptyModel, {
+    type: "pipelines",
+    pipelines: [pipeline(30, 3, "success"), pipeline(20, 2, "running")],
+  });
+  expect(shouldPollList(active)).toBe(true);
+  expect(shouldPollList(reduce(active, { type: "openGraph", graph: graph([job("a")]) }))).toBe(false);
+  expect(
+    shouldPollList(reduce(emptyModel, { type: "pipelines", pipelines: [pipeline(1, 1), pipeline(2, 2, "failed")] })),
+  ).toBe(false);
+  const navigating = reduce(active, {
+    type: "startNavigating",
+    target: { kind: "graph", pipelineIid: "2" },
+  });
+  expect(shouldPollList(navigating)).toBe(true);
+  const empty = reduce(emptyModel, { type: "pipelines", pipelines: [] });
+  expect(shouldPollList(empty)).toBe(false);
 });
 
 test("refresh while logs keeps the traced job even if focus would fall back", () => {
@@ -177,4 +193,93 @@ test("non-fatal error clears on back", () => {
   model = reduce(model, { type: "back" });
   expect(model.error).toBeNull();
   expect(model.screen).toBe("list");
+});
+
+test("refresh keeps the selected pipeline by id when rows are reordered", () => {
+  let model = reduce(emptyModel, {
+    type: "pipelines",
+    pipelines: [pipeline(30, 3), pipeline(20, 2), pipeline(10, 1)],
+  });
+  model = reduce(model, { type: "moveList", delta: 2 });
+  expect(selectedPipeline(model)?.id).toBe(10);
+  model = reduce(model, {
+    type: "pipelines",
+    pipelines: [pipeline(10, 1), pipeline(20, 2), pipeline(30, 3)],
+  });
+  expect(selectedPipeline(model)?.id).toBe(10);
+  expect(model.selectedIndex).toBe(0);
+});
+
+test("refresh keeps the selection when rows are retained in order", () => {
+  let model = reduce(emptyModel, {
+    type: "pipelines",
+    pipelines: [pipeline(30, 3), pipeline(20, 2)],
+  });
+  model = reduce(model, { type: "moveList", delta: 1 });
+  model = reduce(model, { type: "pipelines", pipelines: [pipeline(30, 3), pipeline(20, 2)] });
+  expect(selectedPipeline(model)?.id).toBe(20);
+  expect(model.selectedIndex).toBe(1);
+});
+
+test("refresh with a removed selected pipeline clamps to the nearest row", () => {
+  let model = reduce(emptyModel, {
+    type: "pipelines",
+    pipelines: [pipeline(30, 3), pipeline(20, 2), pipeline(10, 1)],
+  });
+  model = reduce(model, { type: "moveList", delta: 2 });
+  expect(selectedPipeline(model)?.id).toBe(10);
+  model = reduce(model, { type: "pipelines", pipelines: [pipeline(30, 3), pipeline(20, 2)] });
+  expect(selectedPipeline(model)?.id).toBe(20);
+  expect(model.selectedIndex).toBe(1);
+});
+
+test("refreshError keeps the current data and is non-fatal", () => {
+  let model = reduce(emptyModel, {
+    type: "pipelines",
+    pipelines: [pipeline(30, 3), pipeline(20, 2, "running")],
+  });
+  model = reduce(model, { type: "moveList", delta: 1 });
+  model = reduce(model, { type: "refreshError", message: "429 Too Many Requests" });
+  expect(model.error).toBe("429 Too Many Requests");
+  expect(model.errorFatal).toBe(false);
+  expect(model.pipelines).toHaveLength(2);
+  expect(selectedPipeline(model)?.id).toBe(20);
+  expect(model.screen).toBe("list");
+});
+
+test("a successful refresh clears a recovered refresh warning", () => {
+  let model = reduce(emptyModel, { type: "pipelines", pipelines: [pipeline(1, 1)] });
+  model = reduce(model, { type: "refreshError", message: "list failed" });
+  expect(model.error).toBe("list failed");
+  model = reduce(model, { type: "pipelines", pipelines: [pipeline(1, 1), pipeline(2, 2, "running")] });
+  expect(model.error).toBeNull();
+  expect(model.errorFatal).toBe(false);
+});
+
+test("a successful graph refresh clears a recovered refresh warning", () => {
+  let model = reduce(emptyModel, {
+    type: "pipelines",
+    pipelines: [pipeline(1, 1, "running")],
+  });
+  model = reduce(model, { type: "refreshError", message: "graphql failed" });
+  expect(model.error).toBe("graphql failed");
+  model = reduce(model, { type: "openGraph", graph: graph([job("a")], "RUNNING") });
+  model = reduce(model, { type: "refreshError", message: "graphql failed" });
+  expect(model.error).toBe("graphql failed");
+  model = reduce(model, { type: "refreshGraph", graph: graph([job("a")], "RUNNING") });
+  expect(model.error).toBeNull();
+  expect(model.errorFatal).toBe(false);
+});
+
+test("refreshGraph preserves the focused job when refreshed jobs are reordered", () => {
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([job("a"), job("b")], "RUNNING"),
+  });
+  model = reduce(model, { type: "focusJob", id: "b" });
+  model = reduce(model, {
+    type: "refreshGraph",
+    graph: graph([job("b"), job("a")], "RUNNING"),
+  });
+  expect(focusedJob(model)?.id).toBe("b");
 });
