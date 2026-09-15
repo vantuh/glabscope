@@ -86,7 +86,8 @@ function isDimmedAt(spans: CapturedSpan[], column: number) {
   return false;
 }
 
-function hasDimmedPanelBody(setup: Awaited<ReturnType<typeof testRender>>, frame: string) {
+function hasDimmedPanelBody(setup: Awaited<ReturnType<typeof testRender>>) {
+  const frame = setup.captureCharFrame();
   const lines = frame.split("\n");
   const spans = setup.captureSpans().lines;
   const dimmed = spans.map((line) => line.spans.some(isDimmed));
@@ -94,17 +95,29 @@ function hasDimmedPanelBody(setup: Awaited<ReturnType<typeof testRender>>, frame
   const footer = lines.findIndex(
     (line) => line.includes("enter graph") || line.includes("arrows move"),
   );
-  const bordersUndimmed = lines.every((line, index) => {
-    if (line.includes("╭") || line.includes("╰")) {
-      return !dimmed[index];
-    }
-    const left = line.indexOf("│");
-    const right = line.lastIndexOf("│");
-    return (
-      left < 0 ||
-      (!isDimmedAt(spans[index]?.spans ?? [], left) && !isDimmedAt(spans[index]?.spans ?? [], right))
-    );
-  });
+  const top = lines.findIndex((line) => line.includes("╭"));
+  const bottom = lines.findIndex((line) => line.includes("╰"));
+  const leftCol = lines[top]?.indexOf("╭") ?? -1;
+  const rightCol = lines[top]?.lastIndexOf("╮") ?? -1;
+  const bordersUndimmed =
+    leftCol >= 0 &&
+    rightCol > leftCol &&
+    bottom > top &&
+    lines.every((line, index) => {
+      if (index < top || index > bottom || index >= spans.length) {
+        return true;
+      }
+      if (index === top || index === bottom) {
+        return !dimmed[index];
+      }
+      const rowSpans = spans[index]?.spans ?? [];
+      return (
+        line[leftCol] === "│" &&
+        line[rightCol] === "│" &&
+        !isDimmedAt(rowSpans, leftCol) &&
+        !isDimmedAt(rowSpans, rightCol)
+      );
+    });
   return (
     title >= 0 &&
     footer > title &&
@@ -243,7 +256,7 @@ test("list shows an animated loading line inside its frame before the graph fetc
     expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
     expect(frame).toMatch(/[╭╮╰╯]/);
     expect(frame).toContain("#42");
-    expect(hasDimmedPanelBody(setup, frame)).toBe(true);
+    expect(hasDimmedPanelBody(setup)).toBe(true);
     const lines = frame.split("\n");
     expect(lines.findIndex((line) => line.includes("pipelines"))).toBeLessThan(
       lines.findIndex((line) => line.includes("Loading pipeline…")),
@@ -393,7 +406,7 @@ test("graph shows an animated loading line inside its frame before the log scree
         expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
         expect(frame).toMatch(/[╭╮╰╯]/);
         expect(frame).toContain("[build]");
-        expect(hasDimmedPanelBody(setup, frame)).toBe(true);
+        expect(hasDimmedPanelBody(setup)).toBe(true);
         const lines = frame.split("\n");
         expect(lines.findIndex((line) => line.includes("pipeline 5"))).toBeLessThan(
           lines.findIndex((line) => line.includes("Loading log…")),
