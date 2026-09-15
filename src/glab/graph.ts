@@ -26,6 +26,7 @@ export type PipelineGraph = {
   iid: string;
   status: string;
   jobs: JobNode[];
+  truncated: boolean;
 };
 
 type GqlNeed = { id?: string; name?: string };
@@ -45,7 +46,7 @@ type GqlResponse = {
         id: string;
         iid: string;
         status: string;
-        jobs?: { nodes?: GqlJob[] | null };
+        jobs?: { nodes?: GqlJob[] | null; pageInfo?: { hasNextPage?: boolean } | null };
       } | null;
     } | null;
   };
@@ -107,10 +108,17 @@ export function parsePipelineGraph(payload: GqlResponse): PipelineGraph {
     iid: pipeline.iid,
     status: pipeline.status,
     jobs,
+    truncated: Boolean(pipeline.jobs?.pageInfo?.hasNextPage),
   };
 }
 
+const projectPathCache = new Map<string, string>();
+
 export async function projectFullPath(cwd = process.cwd()): Promise<string> {
+  const cached = projectPathCache.get(cwd);
+  if (cached) {
+    return cached;
+  }
   const raw = parseJsonStdout<{ path_with_namespace?: string; path?: string }>(
     await runGlab(["repo", "view", "-F", "json"], { cwd }),
   );
@@ -118,6 +126,7 @@ export async function projectFullPath(cwd = process.cwd()): Promise<string> {
   if (!path) {
     throw new Error("glab repo view did not include path_with_namespace");
   }
+  projectPathCache.set(cwd, path);
   return path;
 }
 

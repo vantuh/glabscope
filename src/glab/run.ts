@@ -6,6 +6,8 @@ export type GlabResult = {
   code: number;
 };
 
+const GLAB_TIMEOUT_MS = 20_000;
+
 export async function runGlab(
   args: string[],
   options: { cwd?: string } = {},
@@ -16,12 +18,17 @@ export async function runGlab(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { stdout, stderr, code: code ?? 1 };
+    const killer = setTimeout(() => proc.kill(), GLAB_TIMEOUT_MS);
+    try {
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      return { stdout, stderr, code: code ?? 1 };
+    } finally {
+      clearTimeout(killer);
+    }
   } catch {
     return {
       stdout: "",

@@ -1,24 +1,32 @@
 import { useEffect, useMemo, useReducer, useRef } from "react";
-import { useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { emptyModel, focusedJob, nextPollDelay, reduce, selectedPipeline, shouldPollGraph } from "./model.ts";
+import { useKeyboard, useRenderer } from "@opentui/react";
+import {
+  emptyModel,
+  focusedJob,
+  nextPollDelay,
+  reduce,
+  selectedPipeline,
+  shouldPollGraph,
+  tracedJob,
+} from "./model.ts";
 import { isQuitKey } from "./keys.ts";
 import { glabBin, probeGlab } from "./glab/probe.ts";
 import { listPipelines } from "./glab/list.ts";
-import { fetchPipelineGraph } from "./glab/graph.ts";
+import { fetchPipelineGraph, NeedsUnavailableError } from "./glab/graph.ts";
 import { traceArgv } from "./glab/trace.ts";
 import { BUCKET_COLOR } from "./status.ts";
-import { buildDag, renderDagAscii } from "./layout/dag.ts";
+import { buildDag, formatJobLine, visualJobs } from "./layout/dag.ts";
 
 export function App() {
+  const renderer = useRenderer();
   const [model, dispatch] = useReducer(reduce, emptyModel);
-  const { width, height } = useTerminalDimensions();
   const logProc = useRef<ReturnType<typeof Bun.spawn> | null>(null);
 
   useEffect(() => {
     void (async () => {
       const probe = await probeGlab();
       if (!probe.ok) {
-        dispatch({ type: "error", message: probe.message });
+        dispatch({ type: "error", message: probe.message, fatal: true });
         return;
       }
       try {
@@ -27,6 +35,7 @@ export function App() {
         dispatch({
           type: "error",
           message: error instanceof Error ? error.message : String(error),
+          fatal: true,
         });
       }
     })();
@@ -49,14 +58,28 @@ export function App() {
       }
       try {
         const graph = await fetchPipelineGraph(String(iid));
+        if (stopped) {
+          return;
+        }
         dispatch({ type: "refreshGraph", graph });
         delay = nextPollDelay(delay, false);
         if (!shouldPollGraph({ ...model, graph, screen: "graph" })) {
           return;
         }
       } catch (error) {
+        if (stopped) {
+          return;
+        }
         const rateLimited = error instanceof Error && error.name === "RateLimitedError";
-        delay = nextPollDelay(delay, rateLimited);
+        if (!rateLimited) {
+          dispatch({
+            type: "error",
+            message: error instanceof Error ? error.message : String(error),
+            fatal: false,
+          });
+          return;
+        }
+        delay = nextPollDelay(delay, true);
       }
       if (!stopped) {
         timer = setTimeout(() => void tick(), delay);
@@ -72,21 +95,28 @@ export function App() {
   }, [model.screen, model.graph?.status, model.selectedIndex]);
 
   useEffect(() => {
-    if (model.screen !== "logs") {
+    if (model.screen !== "logs" || !model.logJobId) {
       logProc.current?.kill();
       logProc.current = null;
       return;
     }
-    const job = focusedJob(model);
-    if (!job) {
+    const jobId = model.logJobId;
+    let proc: ReturnType<typeof Bun.spawn>;
+    try {
+      proc = Bun.spawn([glabBin(), ...traceArgv(jobId)], {
+        cwd: process.cwd(),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+    } catch (error) {
+      dispatch({
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+        fatal: false,
+      });
       return;
     }
-    const proc = Bun.spawn([glabBin(), ...traceArgv(job.numericId)], {
-      cwd: process.cwd(),
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
     logProc.current = proc;
     let cancelled = false;
     const read = async (stream: ReadableStream<Uint8Array>) => {
@@ -117,17 +147,24 @@ export function App() {
       proc.kill();
       logProc.current = null;
     };
-  }, [model.screen, focusedJob(model)?.numericId]);
+  }, [model.screen, model.logJobId]);
+
+  const dag = useMemo(
+    () => (model.graph ? buildDag(model.graph.jobs) : null),
+    [model.graph],
+  );
 
   useKeyboard((key) => {
     if (isQuitKey(key.name)) {
+      logProc.current?.kill();
+      renderer.destroy();
       process.exit(0);
-    }
-    if (model.error) {
-      return;
     }
     if (key.name === "escape") {
       dispatch({ type: "back" });
+      return;
+    }
+    if (model.error) {
       return;
     }
     if (model.screen === "list") {
@@ -147,37 +184,38 @@ export function App() {
           .catch((error: unknown) =>
             dispatch({
               type: "error",
-              message: error instanceof Error ? error.message : String(error),
+              message:
+                error instanceof NeedsUnavailableError
+                  ? error.message
+                  : error instanceof Error
+                    ? error.message
+                    : String(error),
+              fatal: false,
             }),
           );
       }
     }
-    if (model.screen === "graph") {
+    if (model.screen === "graph" && dag) {
+      const order = visualJobs(dag);
+      const currentId = focusedJob(model)?.id;
+      const index = Math.max(0, order.findIndex((job) => job.id === currentId));
       if (key.name === "up" || key.name === "left") {
-        dispatch({ type: "moveJob", delta: -1 });
+        const next = order[index - 1];
+        if (next) {
+          dispatch({ type: "focusJob", id: next.id });
+        }
       }
       if (key.name === "down" || key.name === "right") {
-        dispatch({ type: "moveJob", delta: 1 });
+        const next = order[index + 1];
+        if (next) {
+          dispatch({ type: "focusJob", id: next.id });
+        }
       }
       if (key.name === "return") {
         dispatch({ type: "openLogs" });
       }
     }
   });
-
-  const dag = useMemo(
-    () => (model.graph ? buildDag(model.graph.jobs) : null),
-    [model.graph],
-  );
-  const dagLines = useMemo(() => {
-    if (!dag) {
-      return [];
-    }
-    return renderDagAscii(dag, focusedJob(model)?.id, {
-      width: Math.max(20, width - 4),
-      height: Math.max(4, height - 8),
-    });
-  }, [dag, model.focusedJobIndex, width, height]);
 
   if (!model.booted) {
     return (
@@ -190,21 +228,21 @@ export function App() {
   if (model.error) {
     return (
       <box padding={1}>
-        <text fg="#ef4444">Cannot start</text>
+        <text fg="#ef4444">{model.errorFatal ? "Cannot start" : "Error"}</text>
         <text>{model.error}</text>
-        <text fg="#9ca3af">q quit</text>
+        <text fg="#9ca3af">{model.errorFatal ? "q quit" : "esc back  q quit"}</text>
       </box>
     );
   }
 
   if (model.screen === "logs") {
-    const job = focusedJob(model);
+    const job = tracedJob(model);
     return (
       <box padding={1} flexDirection="column" flexGrow={1}>
         <text>
           log {job?.name} {model.logDone ? "(ended, esc back)" : "(live, esc back)"}
         </text>
-        <scrollbox focused flexGrow={1}>
+        <scrollbox focused flexGrow={1} stickyScroll stickyStart="bottom">
           <text>{model.logBuffer || "waiting for glab ci trace…"}</text>
         </scrollbox>
       </box>
@@ -212,28 +250,25 @@ export function App() {
   }
 
   if (model.screen === "graph") {
+    const focusedId = focusedJob(model)?.id;
     return (
       <box padding={1} flexDirection="column" flexGrow={1}>
         <text>
           pipeline iid {selectedPipeline(model)?.iid}  status {model.graph?.status}
         </text>
+        {model.graph?.truncated ? (
+          <text fg="#eab308">job list truncated at 100</text>
+        ) : null}
         <text fg="#9ca3af">arrows move  enter log  esc list  q quit</text>
-        <box flexDirection="row">
-          {dag?.ranks.map((column, columnIndex) => (
-            <box key={columnIndex} marginRight={1}>
-              {column.map((job) => (
+        <scrollbox focused flexGrow={1}>
+          {dag
+            ? visualJobs(dag).map((job) => (
                 <text key={job.id} fg={BUCKET_COLOR[job.bucket]}>
-                  {job.id === focusedJob(model)?.id ? ">" : " "}[{job.name}]
+                  {formatJobLine(job, focusedId)}
                 </text>
-              ))}
-            </box>
-          ))}
-        </box>
-        {dagLines.map((line, index) => (
-          <text key={index} fg="#6b7280">
-            {line}
-          </text>
-        ))}
+              ))
+            : null}
+        </scrollbox>
       </box>
     );
   }

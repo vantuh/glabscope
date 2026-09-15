@@ -1,17 +1,20 @@
 import type { PipelineRow } from "./glab/list.ts";
 import type { JobNode, PipelineGraph } from "./glab/graph.ts";
 import { isActivePipelineStatus } from "./status.ts";
+import { appendLogBuffer } from "./log-text.ts";
 
 export type Screen = "list" | "graph" | "logs";
 
 export type AppModel = {
   screen: Screen;
   error: string | null;
+  errorFatal: boolean;
   booted: boolean;
   pipelines: PipelineRow[];
   selectedIndex: number;
   graph: PipelineGraph | null;
   focusedJobIndex: number;
+  logJobId: string | null;
   logBuffer: string;
   logDone: boolean;
 };
@@ -19,22 +22,24 @@ export type AppModel = {
 export const emptyModel: AppModel = {
   screen: "list",
   error: null,
+  errorFatal: false,
   booted: false,
   pipelines: [],
   selectedIndex: 0,
   graph: null,
   focusedJobIndex: 0,
+  logJobId: null,
   logBuffer: "",
   logDone: false,
 };
 
 export type Action =
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; fatal?: boolean }
   | { type: "pipelines"; pipelines: PipelineRow[] }
   | { type: "moveList"; delta: number }
   | { type: "openGraph"; graph: PipelineGraph }
   | { type: "refreshGraph"; graph: PipelineGraph }
-  | { type: "moveJob"; delta: number }
+  | { type: "focusJob"; id: string }
   | { type: "openLogs" }
   | { type: "logChunk"; chunk: string }
   | { type: "logDone" }
@@ -46,6 +51,16 @@ export function selectedPipeline(model: AppModel): PipelineRow | undefined {
 
 export function focusedJob(model: AppModel): JobNode | undefined {
   return model.graph?.jobs[model.focusedJobIndex];
+}
+
+export function tracedJob(model: AppModel): JobNode | undefined {
+  if (!model.logJobId || !model.graph) {
+    return focusedJob(model);
+  }
+  return (
+    model.graph.jobs.find((job) => job.numericId === model.logJobId) ??
+    focusedJob(model)
+  );
 }
 
 function clamp(index: number, length: number): number {
@@ -63,11 +78,17 @@ function focusIndexForId(graph: PipelineGraph, id: string | undefined): number {
 export function reduce(model: AppModel, action: Action): AppModel {
   switch (action.type) {
     case "error":
-      return { ...model, error: action.message, booted: true };
+      return {
+        ...model,
+        error: action.message,
+        errorFatal: action.fatal ?? false,
+        booted: true,
+      };
     case "pipelines":
       return {
         ...model,
         error: null,
+        errorFatal: false,
         booted: true,
         pipelines: action.pipelines,
         selectedIndex: clamp(model.selectedIndex, action.pipelines.length),
@@ -87,8 +108,12 @@ export function reduce(model: AppModel, action: Action): AppModel {
         graph: action.graph,
         focusedJobIndex: 0,
         error: null,
+        errorFatal: false,
       };
     case "refreshGraph": {
+      if (model.screen === "logs") {
+        return { ...model, graph: action.graph };
+      }
       const currentId = focusedJob(model)?.id;
       return {
         ...model,
@@ -96,31 +121,42 @@ export function reduce(model: AppModel, action: Action): AppModel {
         focusedJobIndex: focusIndexForId(action.graph, currentId),
       };
     }
-    case "moveJob":
-      return {
-        ...model,
-        focusedJobIndex: clamp(
-          model.focusedJobIndex + action.delta,
-          model.graph?.jobs.length ?? 0,
-        ),
-      };
-    case "openLogs":
-      if (!focusedJob(model)) {
+    case "focusJob": {
+      const index = model.graph?.jobs.findIndex((job) => job.id === action.id) ?? -1;
+      if (index < 0) {
+        return model;
+      }
+      return { ...model, focusedJobIndex: index };
+    }
+    case "openLogs": {
+      const job = focusedJob(model);
+      if (!job) {
         return model;
       }
       return {
         ...model,
         screen: "logs",
+        logJobId: job.numericId,
         logBuffer: "",
         logDone: false,
       };
+    }
     case "logChunk":
-      return { ...model, logBuffer: model.logBuffer + action.chunk };
+      return { ...model, logBuffer: appendLogBuffer(model.logBuffer, action.chunk) };
     case "logDone":
       return { ...model, logDone: true };
     case "back":
+      if (model.error && !model.errorFatal) {
+        return { ...model, error: null };
+      }
       if (model.screen === "logs") {
-        return { ...model, screen: "graph", logBuffer: model.logBuffer, logDone: model.logDone };
+        return {
+          ...model,
+          screen: "graph",
+          logJobId: null,
+          logBuffer: model.logBuffer,
+          logDone: model.logDone,
+        };
       }
       if (model.screen === "graph") {
         return { ...model, screen: "list" };

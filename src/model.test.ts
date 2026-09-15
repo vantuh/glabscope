@@ -15,13 +15,13 @@ function pipeline(id: number, iid: number): PipelineRow {
 }
 
 function graph(jobs: JobNode[], status = "SUCCESS"): PipelineGraph {
-  return { pipelineGid: "gid://gitlab/Ci::Pipeline/1", iid: "9", status, jobs };
+  return { pipelineGid: "gid://gitlab/Ci::Pipeline/1", iid: "9", status, jobs, truncated: false };
 }
 
 function job(name: string, kind = "BUILD"): JobNode {
   return {
     id: name,
-    numericId: "1",
+    numericId: name,
     name,
     status: "success",
     bucket: "success",
@@ -59,7 +59,7 @@ test("bridge job opens logs on the same pipeline graph", () => {
     type: "openGraph",
     graph: graph([job("build"), job("trigger", "BRIDGE")]),
   });
-  model = reduce(model, { type: "moveJob", delta: 1 });
+  model = reduce(model, { type: "focusJob", id: "trigger" });
   model = reduce(model, { type: "openLogs" });
   expect(model.screen).toBe("logs");
   expect(focusedJob(model)?.isBridge).toBe(true);
@@ -68,7 +68,7 @@ test("bridge job opens logs on the same pipeline graph", () => {
 
 test("log screen stays after tracer exits; back returns to the same job", () => {
   let model = reduce(emptyModel, { type: "openGraph", graph: graph([job("a"), job("b")]) });
-  model = reduce(model, { type: "moveJob", delta: 1 });
+  model = reduce(model, { type: "focusJob", id: "b" });
   model = reduce(model, { type: "openLogs" });
   model = reduce(model, { type: "logChunk", chunk: "hello\n" });
   model = reduce(model, { type: "logDone" });
@@ -96,4 +96,25 @@ test("polling is only on the graph of an active pipeline", () => {
   expect(
     shouldPollGraph(reduce(emptyModel, { type: "openGraph", graph: graph([job("a")], "SUCCESS") })),
   ).toBe(false);
+});
+
+test("refresh while logs keeps the traced job even if focus would fall back", () => {
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([job("a"), job("b")], "RUNNING"),
+  });
+  model = reduce(model, { type: "focusJob", id: "b" });
+  model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "refreshGraph", graph: graph([job("a")], "RUNNING") });
+  expect(model.screen).toBe("logs");
+  expect(model.logJobId).toBe("b");
+  expect(model.focusedJobIndex).toBe(1);
+});
+
+test("non-fatal error clears on back", () => {
+  let model = reduce(emptyModel, { type: "pipelines", pipelines: [pipeline(1, 1)] });
+  model = reduce(model, { type: "error", message: "graphql failed", fatal: false });
+  model = reduce(model, { type: "back" });
+  expect(model.error).toBeNull();
+  expect(model.screen).toBe("list");
 });

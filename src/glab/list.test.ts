@@ -17,6 +17,16 @@ test("maps list JSON statuses into four buckets", () => {
   expect(rows[2]?.id).toBe(3);
 });
 
-test("unbound working tree is an error, not an empty list", async () => {
-  await expect(listPipelines(process.cwd())).rejects.toThrow();
+test("nonzero glab list is an error, not an empty success", async () => {
+  const previous = process.env.GLAB_BIN;
+  process.env.GLAB_BIN = "/usr/bin/false";
+  try {
+    await expect(listPipelines(process.cwd())).rejects.toThrow();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.GLAB_BIN;
+    } else {
+      process.env.GLAB_BIN = previous;
+    }
+  }
 });

@@ -11,6 +11,7 @@ test("parses real jobs and name-based needs", () => {
   expect(sonarqube?.needsNames).toEqual(["tests"]);
   expect(sonarqube?.numericId).toBe("47085888");
   expect(graph.jobs.some((job) => job.isBridge)).toBe(false);
+  expect(graph.truncated).toBe(false);
 });
 
 test("fails clearly when needs is absent from the schema", () => {

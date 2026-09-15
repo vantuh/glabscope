@@ -5,7 +5,7 @@ import { PIPELINE_JOBS_QUERY, pipelineJobsQuery } from "./query.ts";
 test("recorded query asks for jobs, status, and needs", () => {
   expect(PIPELINE_JOBS_QUERY).toContain("needs");
   expect(PIPELINE_JOBS_QUERY).toContain("status");
-  expect(PIPELINE_JOBS_QUERY).toContain("kind");
+  expect(PIPELINE_JOBS_QUERY).toContain("pageInfo");
 });
 
 test("real payload includes job ids and at least one named need", () => {

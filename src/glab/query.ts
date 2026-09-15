@@ -14,6 +14,7 @@ query {
       iid
       status
       jobs(first: 100) {
+        pageInfo { hasNextPage }
         nodes {
           id
           name
