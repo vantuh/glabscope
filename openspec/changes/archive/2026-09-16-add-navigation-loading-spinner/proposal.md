@@ -4,8 +4,8 @@ Selecting a pipeline (list → graph) or a job (graph → logs) triggers an asyn
 
 ## What Changes
 
-- Show a loading indicator immediately when Enter is pressed on the pipeline list, while the job graph is being fetched, and clear it when the graph screen opens or the fetch fails.
-- Show a loading indicator immediately when Enter is pressed on the job graph, while the log screen is being opened, and clear it once the log screen is showing (or the trace fails to start).
+- Show a fullscreen dim overlay with an animated spinner immediately when Enter is pressed on the pipeline list, while the job graph is being fetched, and clear it when the graph screen opens or the fetch fails.
+- Show the same fullscreen dim overlay with an animated spinner immediately when Enter is pressed on the job graph, while the log screen is being opened, and clear it once the log screen is showing (or the trace fails to start).
 - Ignore repeated Enter presses on the same target while its loading indicator is active, so duplicate requests can't queue up.
 
 ## Capabilities
@@ -17,5 +17,5 @@ Selecting a pipeline (list → graph) or a job (graph → logs) triggers an asyn
 ## Impact
 
 - `src/model.ts`: new state to track an in-flight navigation (target pipeline/job id) and clear-on-resolve/clear-on-error transitions.
-- `src/app.tsx`: dispatch a "loading" action synchronously on Enter (before the `fetchPipelineGraph` promise settles), render a loading indicator, and guard the Enter handler against re-firing while loading.
+- `src/app.tsx`: dispatch a "loading" action synchronously on Enter (before the `fetchPipelineGraph` promise settles), render an animated fullscreen dim overlay above the existing screen, and guard the Enter handler against re-firing while loading.
 - No changes to `glab` invocations, polling, or log streaming behavior.

@@ -13,7 +13,7 @@ The system SHALL present a selectable list of existing pipelines (running and fi
 
 #### Scenario: Loading feedback while opening a pipeline
 - **WHEN** the operator confirms a pipeline and its job graph is still being fetched
-- **THEN** the system shows a loading indicator on the list screen until the job graph is ready or the fetch fails
+- **THEN** the system shows a fullscreen dim overlay with an animated spinner above the still-visible list until the job graph is ready or the fetch fails
 
 #### Scenario: Repeated confirm while loading
 - **WHEN** the operator presses confirm again on the same or another pipeline while a job graph fetch is already in flight
