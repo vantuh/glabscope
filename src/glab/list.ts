@@ -1,5 +1,6 @@
 import { parseJsonStdout, runGlab } from "./run.ts";
 import { statusBucket, type StatusBucket } from "../status.ts";
+import { looksRateLimited, rateLimitedError } from "./ratelimit.ts";
 
 export type PipelineRow = {
   id: number;
@@ -39,6 +40,9 @@ export async function listPipelines(
       ["ci", "list", "-F", "json", "-P", String(pageSize), "-p", String(page)],
       { cwd },
     );
+    if (result.code !== 0 && looksRateLimited(`${result.stderr}\n${result.stdout}`)) {
+      throw rateLimitedError(result);
+    }
     const chunk = mapPipelines(parseJsonStdout<GlabPipelineJson[]>(result));
     rows.push(...chunk);
     if (chunk.length < pageSize) {
