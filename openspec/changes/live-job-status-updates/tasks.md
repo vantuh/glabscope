@@ -20,7 +20,7 @@
 ## 4. Verification
 
 - [x] 4.1 Run `bun test` and verify the full suite passes with no new dependency or GitLab client added.
-- [ ] 4.2 Manually run the TUI against an active pipeline and verify both list and graph statuses update, graph polling pauses during logs, terminal polling stops, and keyboard navigation remains usable.
+- [x] 4.2 Manually run the TUI against an active pipeline and verify both list and graph statuses update, graph polling pauses during logs, terminal polling stops, and keyboard navigation remains usable.
 
 ## 5. Manual Refresh
 
