@@ -1,0 +1,202 @@
+{
+  "data": {
+    "project": {
+      "pipeline": {
+        "id": "gid://gitlab/Ci::Pipeline/1458632",
+        "iid": "18",
+        "status": "SUCCESS",
+        "jobs": {
+          "nodes": [
+            {
+              "id": "gid://gitlab/Ci::Build/47085895",
+              "name": "owasp-dependency-check",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "security"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085894",
+              "name": "sast",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "security"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085893",
+              "name": "deploy_stage",
+              "status": "MANUAL",
+              "kind": "BUILD",
+              "stage": {
+                "name": "deploy"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085892",
+              "name": "deploy_feature_qa",
+              "status": "MANUAL",
+              "kind": "BUILD",
+              "stage": {
+                "name": "deploy"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085891",
+              "name": "build_worker",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "build_images"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085890",
+              "name": "build_api",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "build_images"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085889",
+              "name": "security_check",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "metrics"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085888",
+              "name": "sonarqube",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "metrics"
+              },
+              "needs": {
+                "nodes": [
+                  {
+                    "id": "gid://gitlab/Ci::BuildNeed/3775048",
+                    "name": "tests"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085887",
+              "name": "qualityspy-v2",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "metrics"
+              },
+              "needs": {
+                "nodes": [
+                  {
+                    "id": "gid://gitlab/Ci::BuildNeed/3775047",
+                    "name": "sonarqube"
+                  },
+                  {
+                    "id": "gid://gitlab/Ci::BuildNeed/3775046",
+                    "name": "tests"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085886",
+              "name": "code_quality",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "metrics"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085885",
+              "name": "tests",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "metrics"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085884",
+              "name": "prepare",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "prepare"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085883",
+              "name": "secret_gate",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "secure_code"
+              },
+              "needs": {
+                "nodes": [
+                  {
+                    "id": "gid://gitlab/Ci::BuildNeed/3775045",
+                    "name": "secret_detection"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085882",
+              "name": "secret_detection",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "stage": {
+                "name": "secure_code"
+              },
+              "needs": {
+                "nodes": []
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
