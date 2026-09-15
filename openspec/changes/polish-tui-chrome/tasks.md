@@ -12,5 +12,5 @@
 
 ## 3. Coexistence and suite
 
-- [x] 3.1 If `add-navigation-loading-spinner` is already on the branch, keep its loading line inside the framed panel (title or a line under the title) and verify loading text still appears without dropping the border
+- [ ] 3.1 If `add-navigation-loading-spinner` is already on the branch, keep its loading line inside the framed panel (title or a line under the title) and verify loading text still appears without dropping the border
 - [x] 3.2 Run `bun test` and confirm the full suite passes, including `src/app.test.tsx`
