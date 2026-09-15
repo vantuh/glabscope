@@ -35,6 +35,8 @@ While the selected pipeline's status is running or pending, the system SHALL ref
 - **WHEN** an automatic graph refresh fails for a reason other than rate limiting
 - **THEN** the last successful graph remains navigable and a non-fatal refresh error is shown
 
+## ADDED Requirements
+
 ### Requirement: Manual graph refresh
 Pressing the refresh key on the graph SHALL trigger an immediate one-shot graph refresh, including while automatic refresh is stopped after a terminal pipeline. The focused job SHALL be preserved across the refreshed graph and a failed manual refresh MUST keep the graph visible with a non-fatal warning.
 
