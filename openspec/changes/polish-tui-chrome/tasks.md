@@ -12,5 +12,5 @@
 
 ## 3. Coexistence and suite
 
-- [ ] 3.1 Replace `add-navigation-loading-spinner`'s fullscreen overlays with animated loading lines inside the relevant framed panel below its title; preserve duplicate-confirm guards and verify the loading text, spinner, and border remain visible
+- [x] 3.1 Replace `add-navigation-loading-spinner`'s fullscreen overlays with animated loading lines inside the relevant framed panel below its title; preserve duplicate-confirm guards and verify the loading text, spinner, and border remain visible
 - [x] 3.2 Run `bun test` and confirm the full suite passes, including `src/app.test.tsx`

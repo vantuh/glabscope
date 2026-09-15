@@ -69,28 +69,6 @@ async function waitForFrame(
   throw new Error(`Did not find ${label} in:\n${setup.captureCharFrame()}`);
 }
 
-function hasFullscreenDimOverlay(setup: Awaited<ReturnType<typeof testRender>>) {
-  const frame = setup.captureSpans();
-  const background = frame.lines[0]?.spans[0]?.bg;
-  if (!background) {
-    return false;
-  }
-  const [r, g, b, a] = background.toInts();
-  if (a !== 255 || r <= 0 || g <= r || b <= g) {
-    return false;
-  }
-  return (
-    frame.lines.length === frame.rows &&
-    frame.lines.every(
-      (line) =>
-        line.spans.reduce(
-          (width, span) => width + (span.bg.equals(background) ? span.width : 0),
-          0,
-        ) === frame.cols,
-    )
-  );
-}
-
 async function mountApp() {
   const setup = await testRender(<App />, { width: 60, height: 12 });
   const frame = await waitForFrame(
@@ -206,7 +184,7 @@ test("repeated Enter on the list fetches the graph only once", async () => {
   }
 });
 
-test("list shows an animated fullscreen loading overlay before the graph fetch resolves", async () => {
+test("list shows an animated loading line inside its frame before the graph fetch resolves", async () => {
   const setup = await mountApp();
   try {
     setup.mockInput.pressEnter();
@@ -217,9 +195,12 @@ test("list shows an animated fullscreen loading overlay before the graph fetch r
     );
     expect(frame).toContain("pipeline…");
     expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
-    expect(hasFullscreenDimOverlay(setup)).toBe(true);
     expect(frame).toMatch(/[╭╮╰╯]/);
     expect(frame).toContain("#42");
+    const lines = frame.split("\n");
+    expect(lines.findIndex((line) => line.includes("pipelines"))).toBeLessThan(
+      lines.findIndex((line) => line.includes("Loading pipeline…")),
+    );
     expect(frame).not.toContain("[build]");
 
     const firstSpinner = frame.match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/)?.[0];
@@ -350,7 +331,7 @@ test("live log chrome keeps the waiting message inside the panel", async () => {
   }
 });
 
-test("graph shows a fullscreen loading overlay after confirm before the log screen", async () => {
+test("graph shows an animated loading line inside its frame before the log screen", async () => {
   const setup = await mountApp();
   try {
     await openGraph(setup);
@@ -363,9 +344,12 @@ test("graph shows a fullscreen loading overlay after confirm before the log scre
       if (frame.includes("log…")) {
         expect(frame).toContain("log…");
         expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
-        expect(hasFullscreenDimOverlay(setup)).toBe(true);
         expect(frame).toMatch(/[╭╮╰╯]/);
         expect(frame).toContain("[build]");
+        const lines = frame.split("\n");
+        expect(lines.findIndex((line) => line.includes("pipeline 5"))).toBeLessThan(
+          lines.findIndex((line) => line.includes("Loading log…")),
+        );
         sawLoading = true;
         break;
       }

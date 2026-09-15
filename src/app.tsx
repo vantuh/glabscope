@@ -48,7 +48,7 @@ export function ScreenPanel({
   );
 }
 
-function LoadingOverlay({ label }: { label: string }) {
+function LoadingIndicator({ label }: { label: string }) {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
@@ -58,23 +58,7 @@ function LoadingOverlay({ label }: { label: string }) {
     return () => clearInterval(timer);
   }, []);
 
-  return (
-    <box
-      position="absolute"
-      top={0}
-      left={0}
-      width="100%"
-      height="100%"
-      zIndex={100}
-      backgroundColor="#111827cc"
-      alignItems="center"
-      justifyContent="center"
-    >
-      <text fg="#60a5fa">
-        {SPINNER_FRAMES[frame]} {label}
-      </text>
-    </box>
-  );
+  return <text fg="#60a5fa">{SPINNER_FRAMES[frame]} {label}</text>;
 }
 
 export function App() {
@@ -333,41 +317,35 @@ export function App() {
   if (model.screen === "graph") {
     const focusedId = focusedJob(model)?.id;
     return (
-      <box flexDirection="column" flexGrow={1}>
-        <ScreenPanel
-          title={`pipeline ${selectedPipeline(model)?.iid ?? ""}`}
-          footer="arrows move  enter log  esc list  q quit"
-        >
-          {model.graph?.truncated ? (
-            <text fg="#eab308">job list truncated at 100</text>
-          ) : null}
-          <scrollbox focused flexGrow={1}>
-            {dag
-              ? visualJobs(dag).map((job) => (
-                  <text key={job.id} fg={BUCKET_COLOR[job.bucket]}>
-                    {formatJobLine(job, focusedId)}
-                  </text>
-                ))
-              : null}
-          </scrollbox>
-        </ScreenPanel>
-        {model.navigating?.kind === "logs" ? <LoadingOverlay label="Loading log…" /> : null}
-      </box>
+      <ScreenPanel
+        title={`pipeline ${selectedPipeline(model)?.iid ?? ""}`}
+        footer="arrows move  enter log  esc list  q quit"
+      >
+        {model.navigating?.kind === "logs" ? <LoadingIndicator label="Loading log…" /> : null}
+        {model.graph?.truncated ? <text fg="#eab308">job list truncated at 100</text> : null}
+        <scrollbox focused flexGrow={1}>
+          {dag
+            ? visualJobs(dag).map((job) => (
+                <text key={job.id} fg={BUCKET_COLOR[job.bucket]}>
+                  {formatJobLine(job, focusedId)}
+                </text>
+              ))
+            : null}
+        </scrollbox>
+      </ScreenPanel>
     );
   }
 
   return (
-    <box flexDirection="column" flexGrow={1}>
-      <ScreenPanel title="pipelines" footer="enter graph  q quit">
-        <scrollbox focused flexGrow={1}>
-          {model.pipelines.map((row, index) => (
-            <text key={row.id} fg={BUCKET_COLOR[row.bucket]}>
-              {index === model.selectedIndex ? ">" : " "} #{row.id}  {row.status}  {row.ref}
-            </text>
-          ))}
-        </scrollbox>
-      </ScreenPanel>
-      {model.navigating?.kind === "graph" ? <LoadingOverlay label="Loading pipeline…" /> : null}
-    </box>
+    <ScreenPanel title="pipelines" footer="enter graph  q quit">
+      {model.navigating?.kind === "graph" ? <LoadingIndicator label="Loading pipeline…" /> : null}
+      <scrollbox focused flexGrow={1}>
+        {model.pipelines.map((row, index) => (
+          <text key={row.id} fg={BUCKET_COLOR[row.bucket]}>
+            {index === model.selectedIndex ? ">" : " "} #{row.id}  {row.status}  {row.ref}
+          </text>
+        ))}
+      </scrollbox>
+    </ScreenPanel>
   );
 }
