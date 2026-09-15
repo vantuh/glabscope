@@ -248,6 +248,11 @@ test("graph fetch failure clears loading and allows retry", async () => {
     );
     expect(errorFrame).toContain("error");
     expect(errorFrame).toMatch(/[╭╮╰╯]/);
+    const errorSpan = setup
+      .captureSpans()
+      .lines.flatMap((line) => line.spans)
+      .find((span) => span.text.includes("graph failed"));
+    expect(errorSpan?.fg.toInts()).toEqual([239, 68, 68, 255]);
     expect(errorFrame).not.toContain("pipeline…");
 
     setup.mockInput.pressEscape();

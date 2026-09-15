@@ -311,8 +311,7 @@ export function App() {
   if (model.error) {
     return (
       <ScreenPanel title="error" footer={model.errorFatal ? "q quit" : "esc back  q quit"}>
-        <text fg="#ef4444">{model.errorFatal ? "Cannot start" : "Error"}</text>
-        <text>{model.error}</text>
+        <text fg="#ef4444">{model.error}</text>
       </ScreenPanel>
     );
   }
