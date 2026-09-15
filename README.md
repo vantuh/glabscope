@@ -12,9 +12,17 @@ There is no separate token prompt. Missing `glab`, a missing login, or a directo
 
 ## Run
 
+Install once in this repo:
+
 ```bash
 bun install
-bun start
+```
+
+Start the TUI **from the GitLab project you want to inspect** (so `glab` sees that git remote). This clone has no GitLab remote, so `bun start` here will error on purpose.
+
+```bash
+cd /path/to/your-gitlab-project
+bun /path/to/glab-pipeline-viewer/src/index.tsx
 ```
 
 Keys: `q` quits, arrows move, Enter drills in, Esc goes back (log → graph → list).
