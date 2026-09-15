@@ -37,7 +37,7 @@ The operator SHALL move focus among job nodes and confirm the focused job to ope
 
 #### Scenario: Loading feedback while opening a log
 - **WHEN** the operator confirms a job and the log screen is still being prepared
-- **THEN** the system shows a fullscreen dim overlay with an animated spinner above the still-visible graph until the log screen is showing or opening the log fails
+- **THEN** the system shows an animated spinner and loading text inside the still-visible framed graph until the log screen is showing or opening the log fails
 
 #### Scenario: Repeated confirm while loading
 - **WHEN** the operator presses confirm again on the same or another job while a log open is already in flight
