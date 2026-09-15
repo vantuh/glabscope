@@ -32,5 +32,5 @@
 
 ## 6. Integration
 
-- [ ] 6.1 Walk list → graph → live log → stay after complete → Esc → Esc in a real project and verify the specs’ scenarios against that session
+- [x] 6.1 Walk list → graph → live log → stay after complete → Esc → Esc in a real project and verify the specs’ scenarios against that session
 - [x] 6.2 Add a README run command (`bun` + `glab` prerequisites) and verify a new clone can follow it without extra auth UI
