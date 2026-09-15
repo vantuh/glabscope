@@ -1,32 +1,45 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+# Shown to AI when creating artifacts. Invariants for this repo — do not re-litigate in proposals.
+context: |
+  Personal GitLab pipeline TUI. Nested screens: pipeline list → same-pipeline needs DAG → job log → Esc back.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  Stack (fixed):
+  - TypeScript + React via @opentui/react (OpenTUI Zig renderer). Not Solid, Ink, Bubble Tea, or shell scripts.
+  - Runtime: Bun (OpenTUI’s documented path) plus native OpenTUI core.
+  - GitLab I/O only through glab on PATH (existing login, cwd git remote). No second HTTP client, PAT UI, or HTML scraping.
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+  glab surfaces:
+  - List: `glab ci list -F json`
+  - DAG: `glab api graphql` for jobs, status, and needs (REST pipeline jobs have no needs; do not parse .gitlab-ci.yml).
+  - Live graph: poll that GraphQL while pipeline is running/pending; pause while the log screen is open; stop when the pipeline is terminal; backoff on 429.
+  - Logs: embed `glab ci trace <job-id>` in a PTY pane (live while the job runs). Do not reimplement trace polling. When the job or tracer exits, keep the log buffer until Esc.
+
+  UX invariants:
+  - Four status buckets only: success, failed, running-or-pending, other.
+  - DAG is needs/arrows, not stage columns only; same pipeline only (bridge = one node, no child drill-down).
+  - Enter on a historical list row opens that pipeline id, not “latest on branch”.
+  - v1 out of scope unless a change explicitly expands it: retry/cancel/play, artifacts, MR entry, YAML visualize.
+
+rules:
+  proposal:
+    - Treat the config context stack (OpenTUI React, Bun, glab-only I/O) as given; do not propose replacing it without an explicit user request.
+    - Always include a Non-goals section.
+    - Keep proposals under 500 words.
+  design:
+    - Route all GitLab reads and live logs through glab subprocesses; name the exact commands.
+    - Do not introduce GitLab HTML scraping, a parallel REST SDK, or a custom job-trace poller.
+  specs:
+    - Specify observable TUI behavior (screens, colors, polling pause, Esc), not OpenTUI component names.
+  tasks:
+    - Every task must include how to verify it.
+    - Keep tasks small enough for one session; put GraphQL needs spike before graph UI.
+
+operations:
+  apply:
+    guidance:
+      - Implement the TUI against the locked stack in context; do not swap frameworks mid-apply.
+      - Spike glab GraphQL needs on the operator’s GitLab before building DAG layout.
+  archive:
+    guidance:
+      - Summarize the archive outcome before finishing.
