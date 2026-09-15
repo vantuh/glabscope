@@ -24,4 +24,4 @@
 
 ## 5. Manual Refresh
 
-- [ ] 5.1 Add a manual refresh key (`r`) for the list and graph screens performing a one-shot fetch with loading feedback and non-fatal failure handling; verify application tests cover refresh after terminal stop, preserved selection/focus, and failure warnings.
+- [x] 5.1 Add a manual refresh key (`r`) for the list and graph screens performing a one-shot fetch with loading feedback and non-fatal failure handling; verify application tests cover refresh after terminal stop, preserved selection/focus, and failure warnings.
