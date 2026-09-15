@@ -240,18 +240,31 @@ test("refreshError keeps the current data and is non-fatal", () => {
   });
   model = reduce(model, { type: "moveList", delta: 1 });
   model = reduce(model, { type: "refreshError", message: "429 Too Many Requests" });
-  expect(model.error).toBe("429 Too Many Requests");
+  expect(model.refreshWarning).toBe("429 Too Many Requests");
+  expect(model.error).toBeNull();
   expect(model.errorFatal).toBe(false);
   expect(model.pipelines).toHaveLength(2);
   expect(selectedPipeline(model)?.id).toBe(20);
   expect(model.screen).toBe("list");
 });
 
+test("refreshError does not touch user-action errors", () => {
+  let model = reduce(emptyModel, {
+    type: "pipelines",
+    pipelines: [pipeline(1, 1, "running")],
+  });
+  model = reduce(model, { type: "error", message: "graph failed", fatal: false });
+  model = reduce(model, { type: "refreshError", message: "list failed" });
+  expect(model.error).toBe("graph failed");
+  expect(model.refreshWarning).toBe("list failed");
+});
+
 test("a successful refresh clears a recovered refresh warning", () => {
   let model = reduce(emptyModel, { type: "pipelines", pipelines: [pipeline(1, 1)] });
   model = reduce(model, { type: "refreshError", message: "list failed" });
-  expect(model.error).toBe("list failed");
+  expect(model.refreshWarning).toBe("list failed");
   model = reduce(model, { type: "pipelines", pipelines: [pipeline(1, 1), pipeline(2, 2, "running")] });
+  expect(model.refreshWarning).toBeNull();
   expect(model.error).toBeNull();
   expect(model.errorFatal).toBe(false);
 });
@@ -261,12 +274,12 @@ test("a successful graph refresh clears a recovered refresh warning", () => {
     type: "pipelines",
     pipelines: [pipeline(1, 1, "running")],
   });
-  model = reduce(model, { type: "refreshError", message: "graphql failed" });
-  expect(model.error).toBe("graphql failed");
   model = reduce(model, { type: "openGraph", graph: graph([job("a")], "RUNNING") });
   model = reduce(model, { type: "refreshError", message: "graphql failed" });
-  expect(model.error).toBe("graphql failed");
+  expect(model.refreshWarning).toBe("graphql failed");
+  expect(model.error).toBeNull();
   model = reduce(model, { type: "refreshGraph", graph: graph([job("a")], "RUNNING") });
+  expect(model.refreshWarning).toBeNull();
   expect(model.error).toBeNull();
   expect(model.errorFatal).toBe(false);
 });

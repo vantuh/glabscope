@@ -646,16 +646,25 @@ test("a missing selected pipeline clamps selection and keeps navigation working"
   }
 });
 
-test("a background list failure keeps the list, retries, and clears the warning on recovery", async () => {
+test("a background list failure keeps the list visible, retries, and clears the warning on recovery", async () => {
   capturePollTimers();
   listDefault = [runningRow(42, 5)];
-  listScript = [[runningRow(42, 5)], new Error("list failed")];
+  listScript = [new Error("list failed"), new Error("list failed")];
   const setup = await testRender(<App />, { width: 60, height: 12 });
   try {
     await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
-    await waitForFrame(setup, (frame) => frame.includes("list failed"), "non-fatal refresh error");
-    // The retry at the bounded delay succeeds and restores the list view.
-    await waitForFrame(setup, (frame) => frame.includes("#42"), "recovered list");
+    // The warning renders inline while the last successful rows stay usable.
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("#42") && frame.includes("list failed"),
+      "warning beside the retained list",
+    );
+    // The retry at the bounded delay succeeds and clears the warning.
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("#42") && !frame.includes("list failed"),
+      "recovered list without warning",
+    );
     expect(listCalls).toBeGreaterThanOrEqual(4);
   } finally {
     setup.renderer.destroy();
@@ -696,12 +705,21 @@ test("graph polling updates job status and recovers from an ordinary failure", a
     await waitForFrame(setup, (frame) => frame.includes("[build]"), "running graph");
     expect(fetchGraphCalls.length).toBeGreaterThanOrEqual(2);
 
-    graphScript = [new Error("graphql failed")];
-    await waitForFrame(setup, (frame) => frame.includes("graphql failed"), "non-fatal refresh error");
+    graphScript = [new Error("graphql failed"), new Error("graphql failed")];
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("graphql failed") && frame.includes("[build]"),
+      "non-fatal refresh warning beside the retained graph",
+    );
 
     graphScript = [graphFor("RUNNING", [jobIn("build", "99", "success")])];
     await waitForFrame(setup, (frame) => !frame.includes("graphql failed"), "recovered graph");
-    expect(fetchGraphCalls.length).toBeGreaterThanOrEqual(3);
+    const buildSpan = setup
+      .captureSpans()
+      .lines.flatMap((line) => line.spans)
+      .find((span) => span.text.includes("[build]"));
+    expect(buildSpan?.fg.toInts()).toEqual([34, 197, 94, 255]);
+    expect(fetchGraphCalls.length).toBeGreaterThanOrEqual(4);
   } finally {
     setup.renderer.destroy();
   }

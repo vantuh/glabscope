@@ -50,7 +50,7 @@ GitLab's `ciJobStatusUpdated` subscription is job-scoped; `ciJobProcessed` can b
 ## Risks / Trade-offs
 
 - [Four-second polling does not provide instant push latency] → Refresh only active data and keep the interval short enough for interactive status tracking.
-- [A project with active pipelines generates repeated CLI/API calls] → Allow only one in-flight call, stop on terminal state, pause hidden screens, and back off to 30 seconds on 429.
+- [A project with active pipelines generates repeated CLI/API calls] → Allow only one in-flight call, stop on terminal state, pause hidden screens, and back off to 30 seconds on 429. Note that each `glab ci list` refresh paginates up to five pages of 50, so projects with more than 50 pipelines issue up to five subprocesses per tick; this multiplier is accepted because v1 targets personal repos well under that size.
 - [Error text may not expose an HTTP status consistently across GitLab/glab versions] → Cover known 429 forms in a shared classifier and treat unknown failures as recoverable non-rate-limit errors.
 - [Stopping list polling when all visible rows are terminal misses pipelines created later] → Keep that limitation explicit; manual/new-pipeline discovery can be designed separately without forcing perpetual polling.
 

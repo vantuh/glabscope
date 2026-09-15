@@ -13,6 +13,8 @@ export type AppModel = {
   screen: Screen;
   error: string | null;
   errorFatal: boolean;
+  /** Non-fatal background-refresh failure message; data stays visible. */
+  refreshWarning: string | null;
   booted: boolean;
   pipelines: PipelineRow[];
   selectedIndex: number;
@@ -29,6 +31,7 @@ export const emptyModel: AppModel = {
   screen: "list",
   error: null,
   errorFatal: false,
+  refreshWarning: null,
   booted: false,
   pipelines: [],
   selectedIndex: 0,
@@ -103,13 +106,6 @@ function reconcileSelectedIndex(model: AppModel, rows: PipelineRow[]): number {
   return clamp(model.selectedIndex, rows.length);
 }
 
-function withoutRecoveredWarning(model: AppModel): AppModel {
-  if (model.error === null || model.errorFatal) {
-    return model;
-  }
-  return { ...model, error: null, errorFatal: false };
-}
-
 export function reduce(model: AppModel, action: Action): AppModel {
   switch (action.type) {
     case "error":
@@ -121,12 +117,15 @@ export function reduce(model: AppModel, action: Action): AppModel {
         navigating: null,
       };
     case "pipelines":
-      return withoutRecoveredWarning({
+      return {
         ...model,
+        error: null,
+        errorFatal: false,
         booted: true,
+        refreshWarning: null,
         pipelines: action.pipelines,
         selectedIndex: reconcileSelectedIndex(model, action.pipelines),
-      });
+      };
     case "moveList":
       return {
         ...model,
@@ -149,17 +148,18 @@ export function reduce(model: AppModel, action: Action): AppModel {
       };
     case "refreshGraph": {
       if (model.screen === "logs") {
-        return withoutRecoveredWarning({ ...model, graph: action.graph });
+        return { ...model, graph: action.graph, refreshWarning: null };
       }
       const currentId = focusedJob(model)?.id;
-      return withoutRecoveredWarning({
+      return {
         ...model,
         graph: action.graph,
         focusedJobIndex: focusIndexForId(action.graph, currentId),
-      });
+        refreshWarning: null,
+      };
     }
     case "refreshError":
-      return { ...model, error: action.message, errorFatal: false };
+      return { ...model, refreshWarning: action.message };
     case "focusJob": {
       const index = model.graph?.jobs.findIndex((job) => job.id === action.id) ?? -1;
       if (index < 0) {

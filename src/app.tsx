@@ -164,10 +164,11 @@ export function App() {
     if (!shouldPollGraph(model)) {
       return;
     }
-    const iid = selectedPipeline(model)?.iid;
-    if (iid === undefined) {
+    const graph = model.graph;
+    if (!graph) {
       return;
     }
+    const iid = graph.iid;
     let delay = NORMAL_POLL_MS;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -209,7 +210,7 @@ export function App() {
         clearTimeout(timer);
       }
     };
-  }, [model.screen, model.graph?.status, model.selectedIndex]);
+  }, [model.screen, model.graph?.status, model.graph?.iid]);
 
   const traceJobId =
     model.navigating?.kind === "logs"
@@ -402,10 +403,13 @@ export function App() {
     const focusedId = focusedJob(model)?.id;
     return (
       <ScreenPanel
-        title={`pipeline ${selectedPipeline(model)?.iid ?? ""}`}
+        title={`pipeline ${model.graph?.iid ?? ""}`}
         footer="arrows move  enter log  esc list  q quit"
         loadingLabel={model.navigating?.kind === "logs" ? "Loading log…" : undefined}
       >
+        {model.refreshWarning ? (
+          <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
+        ) : null}
         {model.graph?.truncated ? <text fg="#eab308">job list truncated at 100</text> : null}
         <scrollbox focused flexGrow={1}>
           {dag
@@ -426,6 +430,9 @@ export function App() {
       footer="enter graph  q quit"
       loadingLabel={model.navigating?.kind === "graph" ? "Loading pipeline…" : undefined}
     >
+      {model.refreshWarning ? (
+        <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
+      ) : null}
       <scrollbox focused flexGrow={1}>
         {model.pipelines.map((row, index) => (
           <text key={row.id} fg={BUCKET_COLOR[row.bucket]}>

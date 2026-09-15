@@ -2,9 +2,11 @@ export const NORMAL_POLL_MS = 4000;
 export const MAX_POLL_MS = 30_000;
 
 /**
- * Delay before the next poll tick. A rate-limited tick doubles the current
- * delay up to the cap; any non-rate-limited outcome resets to the normal
- * interval.
+ * Delay before the next poll tick. Callers pass `rateLimited: true` after a
+ * rate-limited tick (the current delay doubles up to the cap) and
+ * `rateLimited: false` only after a successful refresh, which resets to the
+ * normal interval. Ordinary failures keep the current delay by not calling
+ * this at all.
  */
 export function nextPollDelay(currentMs: number, rateLimited: boolean): number {
   if (!rateLimited) {
