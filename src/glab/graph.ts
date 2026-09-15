@@ -1,0 +1,142 @@
+import { parseJsonStdout, runGlab } from "./run.ts";
+import { pipelineJobsQuery } from "./query.ts";
+import { statusBucket, type StatusBucket } from "../status.ts";
+
+export class NeedsUnavailableError extends Error {
+  constructor(message = "GitLab GraphQL on this instance does not expose job needs") {
+    super(message);
+    this.name = "NeedsUnavailableError";
+  }
+}
+
+export type JobNode = {
+  id: string;
+  numericId: string;
+  name: string;
+  status: string;
+  bucket: StatusBucket;
+  kind: string;
+  stage: string;
+  needsNames: string[];
+  isBridge: boolean;
+};
+
+export type PipelineGraph = {
+  pipelineGid: string;
+  iid: string;
+  status: string;
+  jobs: JobNode[];
+};
+
+type GqlNeed = { id?: string; name?: string };
+type GqlJob = {
+  id: string;
+  name: string;
+  status: string;
+  kind?: string;
+  stage?: { name?: string } | null;
+  needs?: { nodes?: GqlNeed[] | null } | null;
+};
+
+type GqlResponse = {
+  data?: {
+    project?: {
+      pipeline?: {
+        id: string;
+        iid: string;
+        status: string;
+        jobs?: { nodes?: GqlJob[] | null };
+      } | null;
+    } | null;
+  };
+  errors?: { message: string; path?: unknown; extensions?: { fieldName?: string } }[];
+};
+
+export function numericIdFromGid(gid: string): string {
+  const tail = gid.split("/").pop();
+  if (!tail || !/^\d+$/.test(tail)) {
+    throw new Error(`Cannot parse numeric id from ${gid}`);
+  }
+  return tail;
+}
+
+export function parsePipelineGraph(payload: GqlResponse): PipelineGraph {
+  const needsMissing = payload.errors?.some(
+    (error) =>
+      error.extensions?.fieldName === "needs" ||
+      /Field 'needs' doesn't exist/i.test(error.message),
+  );
+  if (needsMissing) {
+    throw new NeedsUnavailableError(payload.errors?.[0]?.message);
+  }
+  if (payload.errors?.length) {
+    throw new Error(payload.errors.map((error) => error.message).join("; "));
+  }
+
+  const pipeline = payload.data?.project?.pipeline;
+  if (!pipeline) {
+    throw new Error("Pipeline not found");
+  }
+  const nodes = pipeline.jobs?.nodes;
+  if (!nodes) {
+    throw new Error("Pipeline jobs were not returned");
+  }
+
+  const jobs: JobNode[] = nodes.map((node) => {
+    if (node.needs === undefined) {
+      throw new NeedsUnavailableError("Job payload is missing needs");
+    }
+    const kind = node.kind ?? "BUILD";
+    return {
+      id: node.id,
+      numericId: numericIdFromGid(node.id),
+      name: node.name,
+      status: node.status,
+      bucket: statusBucket(node.status),
+      kind,
+      stage: node.stage?.name ?? "",
+      needsNames: (node.needs?.nodes ?? [])
+        .map((need) => need.name)
+        .filter((name): name is string => Boolean(name)),
+      isBridge: kind.toUpperCase() === "BRIDGE",
+    };
+  });
+
+  return {
+    pipelineGid: pipeline.id,
+    iid: pipeline.iid,
+    status: pipeline.status,
+    jobs,
+  };
+}
+
+export async function projectFullPath(cwd = process.cwd()): Promise<string> {
+  const raw = parseJsonStdout<{ path_with_namespace?: string; path?: string }>(
+    await runGlab(["repo", "view", "-F", "json"], { cwd }),
+  );
+  const path = raw.path_with_namespace ?? raw.path;
+  if (!path) {
+    throw new Error("glab repo view did not include path_with_namespace");
+  }
+  return path;
+}
+
+export async function fetchPipelineGraph(
+  pipelineIid: string,
+  cwd = process.cwd(),
+): Promise<PipelineGraph> {
+  const fullPath = await projectFullPath(cwd);
+  const result = await runGlab(
+    ["api", "graphql", "-f", `query=${pipelineJobsQuery(fullPath, pipelineIid)}`],
+    { cwd },
+  );
+  if (result.code !== 0) {
+    if (/429/.test(result.stderr) || /429/.test(result.stdout)) {
+      const error = new Error("rate limited");
+      error.name = "RateLimitedError";
+      throw error;
+    }
+    throw new Error(result.stderr.trim() || result.stdout.trim() || "graphql failed");
+  }
+  return parsePipelineGraph(JSON.parse(result.stdout) as GqlResponse);
+}

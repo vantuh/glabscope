@@ -6,9 +6,9 @@
 
 ## 2. GitLab client
 
-- [ ] 2.1 Wrap `glab ci list -F json` with pagination flags and map statuses into the four buckets; verify unit tests cover success, failed, running/pending, and other
-- [ ] 2.2 Wrap GraphQL job+needs fetch and fail clearly when `needs` is absent from the schema; verify a fixture without needs reports the error path
-- [ ] 2.3 Spawn `glab ci trace <job-id>` as a child process with cwd inherited; verify a dry-run/help invocation builds the correct argv
+- [x] 2.1 Wrap `glab ci list -F json` with pagination flags and map statuses into the four buckets; verify unit tests cover success, failed, running/pending, and other
+- [x] 2.2 Wrap GraphQL job+needs fetch and fail clearly when `needs` is absent from the schema; verify a fixture without needs reports the error path
+- [x] 2.3 Spawn `glab ci trace <job-id>` as a child process with cwd inherited; verify a dry-run/help invocation builds the correct argv
 
 ## 3. Pipeline list
 

@@ -1,0 +1,12 @@
+{
+  "errors": [
+    {
+      "message": "Field 'needs' doesn't exist on type 'CiJob'",
+      "extensions": {
+        "code": "undefinedField",
+        "typeName": "CiJob",
+        "fieldName": "needs"
+      }
+    }
+  ]
+}
