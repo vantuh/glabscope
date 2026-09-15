@@ -1,7 +1,7 @@
 ## 1. Bootstrap
 
 - [x] 1.1 Scaffold a Bun TypeScript app with `@opentui/react` and verify `bun` starts a blank TUI that exits cleanly on `q`
-- [ ] 1.2 Document that `glab` must be on PATH and authenticated; verify a missing-`glab` launch shows an error instead of an empty success list
+- [x] 1.2 Document that `glab` must be on PATH and authenticated; verify a missing-`glab` launch shows an error instead of an empty success list
 - [ ] 1.3 Spike `glab api graphql` against the operator’s GitLab for pipeline jobs, status, and `needs` (ids if present); verify the query is recorded in code comments or a fixture from a real payload
 
 ## 2. GitLab client

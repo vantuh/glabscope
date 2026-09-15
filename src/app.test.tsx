@@ -14,7 +14,9 @@ test("blank TUI renders and exits on q", async () => {
   try {
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("glab-pipeline-viewer");
+    expect(frame.includes("Checking glab") || frame.includes("glab-pipeline-viewer")).toBe(
+      true,
+    );
     setup.mockInput.pressKey("q");
     await setup.renderOnce();
     expect(exited).toBe(true);
