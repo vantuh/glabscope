@@ -1,7 +1,7 @@
 import type { PipelineRow } from "./glab/list.ts";
 import type { JobNode, PipelineGraph } from "./glab/graph.ts";
 import { isActivePipelineStatus } from "./status.ts";
-import { appendLogBuffer } from "./log-text.ts";
+import { appendLogTrace, emptyLogTrace, logVisibleText, type LogTrace } from "./log-text.ts";
 
 export type Screen = "list" | "graph" | "logs";
 
@@ -13,6 +13,10 @@ export type AppModel = {
   screen: Screen;
   error: string | null;
   errorFatal: boolean;
+  /** Non-fatal background-refresh failure message; data stays visible. */
+  refreshWarning: string | null;
+  /** One-shot manual refresh in flight, per screen. */
+  manualRefresh: "list" | "graph" | null;
   booted: boolean;
   pipelines: PipelineRow[];
   selectedIndex: number;
@@ -20,6 +24,7 @@ export type AppModel = {
   focusedJobIndex: number;
   logJobId: string | null;
   logBuffer: string;
+  logTrace: LogTrace;
   logDone: boolean;
   navigating: Navigating | null;
 };
@@ -28,6 +33,8 @@ export const emptyModel: AppModel = {
   screen: "list",
   error: null,
   errorFatal: false,
+  refreshWarning: null,
+  manualRefresh: null,
   booted: false,
   pipelines: [],
   selectedIndex: 0,
@@ -35,6 +42,7 @@ export const emptyModel: AppModel = {
   focusedJobIndex: 0,
   logJobId: null,
   logBuffer: "",
+  logTrace: emptyLogTrace(),
   logDone: false,
   navigating: null,
 };
@@ -46,6 +54,8 @@ export type Action =
   | { type: "startNavigating"; target: NonNullable<AppModel["navigating"]> }
   | { type: "openGraph"; graph: PipelineGraph }
   | { type: "refreshGraph"; graph: PipelineGraph }
+  | { type: "refreshError"; message: string }
+  | { type: "manualRefresh"; target: "list" | "graph" }
   | { type: "focusJob"; id: string }
   | { type: "openLogs" }
   | { type: "logsReady" }
@@ -83,6 +93,23 @@ function focusIndexForId(graph: PipelineGraph, id: string | undefined): number {
   return index === -1 ? 0 : index;
 }
 
+/**
+ * Keep the selection on the same pipeline across refreshed rows: first by
+ * stable pipeline id, falling back to the nearest valid row when the selected
+ * pipeline no longer exists.
+ */
+function reconcileSelectedIndex(model: AppModel, rows: PipelineRow[]): number {
+  if (rows.length === 0) {
+    return 0;
+  }
+  const previous = model.pipelines[model.selectedIndex];
+  const byId = previous ? rows.findIndex((row) => row.id === previous.id) : -1;
+  if (byId !== -1) {
+    return byId;
+  }
+  return clamp(model.selectedIndex, rows.length);
+}
+
 export function reduce(model: AppModel, action: Action): AppModel {
   switch (action.type) {
     case "error":
@@ -90,17 +117,18 @@ export function reduce(model: AppModel, action: Action): AppModel {
         ...model,
         error: action.message,
         errorFatal: action.fatal ?? false,
+        manualRefresh: null,
         booted: true,
         navigating: null,
       };
     case "pipelines":
       return {
         ...model,
-        error: null,
-        errorFatal: false,
         booted: true,
+        refreshWarning: null,
+        manualRefresh: null,
         pipelines: action.pipelines,
-        selectedIndex: clamp(model.selectedIndex, action.pipelines.length),
+        selectedIndex: reconcileSelectedIndex(model, action.pipelines),
       };
     case "moveList":
       return {
@@ -120,19 +148,27 @@ export function reduce(model: AppModel, action: Action): AppModel {
         focusedJobIndex: 0,
         error: null,
         errorFatal: false,
+        refreshWarning: null,
+        manualRefresh: null,
         navigating: null,
       };
     case "refreshGraph": {
       if (model.screen === "logs") {
-        return { ...model, graph: action.graph };
+        return { ...model, graph: action.graph, refreshWarning: null, manualRefresh: null };
       }
       const currentId = focusedJob(model)?.id;
       return {
         ...model,
         graph: action.graph,
         focusedJobIndex: focusIndexForId(action.graph, currentId),
+        refreshWarning: null,
+        manualRefresh: null,
       };
     }
+    case "refreshError":
+      return { ...model, refreshWarning: action.message, manualRefresh: null };
+    case "manualRefresh":
+      return { ...model, manualRefresh: action.target };
     case "focusJob": {
       const index = model.graph?.jobs.findIndex((job) => job.id === action.id) ?? -1;
       if (index < 0) {
@@ -159,20 +195,23 @@ export function reduce(model: AppModel, action: Action): AppModel {
         screen: "logs",
         logJobId: model.navigating.jobId,
         logBuffer: "",
+        logTrace: emptyLogTrace(),
         logDone: false,
         navigating: null,
       };
     }
-    case "logChunk":
-      return { ...model, logBuffer: appendLogBuffer(model.logBuffer, action.chunk) };
+    case "logChunk": {
+      const logTrace = appendLogTrace(model.logTrace, action.chunk);
+      return { ...model, logTrace, logBuffer: logVisibleText(logTrace) };
+    }
     case "logDone":
       return { ...model, logDone: true };
     case "back":
       if (model.error && !model.errorFatal) {
-        return { ...model, error: null };
+        return { ...model, error: null, manualRefresh: null };
       }
       if (model.navigating?.kind === "logs") {
-        return { ...model, navigating: null };
+        return { ...model, navigating: null, manualRefresh: null };
       }
       if (model.screen === "logs") {
         return {
@@ -180,11 +219,18 @@ export function reduce(model: AppModel, action: Action): AppModel {
           screen: "graph",
           logJobId: null,
           logBuffer: model.logBuffer,
+          logTrace: model.logTrace,
           logDone: model.logDone,
+          manualRefresh: null,
         };
       }
       if (model.screen === "graph") {
-        return { ...model, screen: "list" };
+        return {
+          ...model,
+          screen: "list",
+          refreshWarning: null,
+          manualRefresh: null,
+        };
       }
       return model;
     default:
@@ -193,15 +239,9 @@ export function reduce(model: AppModel, action: Action): AppModel {
 }
 
 export function shouldPollGraph(model: AppModel): boolean {
-  if (model.screen !== "graph" || !model.graph) {
-    return false;
-  }
-  return isActivePipelineStatus(model.graph.status);
+  return model.screen === "graph" && model.graph !== null;
 }
 
-export function nextPollDelay(currentMs: number, rateLimited: boolean): number {
-  if (!rateLimited) {
-    return 4000;
-  }
-  return Math.min(currentMs * 2, 30_000);
+export function shouldPollList(model: AppModel): boolean {
+  return model.screen === "list" && model.pipelines.length > 0;
 }

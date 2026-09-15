@@ -1,4 +1,5 @@
 import { parseJsonStdout, runGlab } from "./run.ts";
+import { looksRateLimited, rateLimitedError } from "./ratelimit.ts";
 import { pipelineJobsQuery } from "./query.ts";
 import { statusBucket, type StatusBucket } from "../status.ts";
 
@@ -140,10 +141,8 @@ export async function fetchPipelineGraph(
     { cwd },
   );
   if (result.code !== 0) {
-    if (/429/.test(result.stderr) || /429/.test(result.stdout)) {
-      const error = new Error("rate limited");
-      error.name = "RateLimitedError";
-      throw error;
+    if (looksRateLimited(`${result.stderr}\n${result.stdout}`)) {
+      throw rateLimitedError(result);
     }
     throw new Error(result.stderr.trim() || result.stdout.trim() || "graphql failed");
   }

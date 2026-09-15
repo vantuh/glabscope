@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
+import { expect, test, spyOn, mock } from "bun:test";
 import { listPipelines, mapPipelines } from "./list.ts";
+import { RateLimitedError } from "./ratelimit.ts";
+import * as runModule from "./run.ts";
 
 test("maps list JSON statuses into four buckets", () => {
   const rows = mapPipelines([
@@ -28,5 +30,32 @@ test("nonzero glab list is an error, not an empty success", async () => {
     } else {
       process.env.GLAB_BIN = previous;
     }
+  }
+});
+
+test("a rate-limited list page is classified as a rate-limit error", async () => {
+  const runSpy = spyOn(runModule, "runGlab").mockResolvedValue({
+    stdout: "",
+    stderr: "ERROR: 429 Too Many Requests",
+    code: 1,
+  });
+  try {
+    await expect(listPipelines(process.cwd())).rejects.toThrow(RateLimitedError);
+  } finally {
+    runSpy.mockRestore();
+  }
+});
+
+test("ordinary list failures are not classified as rate limits", async () => {
+  const runSpy = spyOn(runModule, "runGlab").mockResolvedValue({
+    stdout: "",
+    stderr: "error: 500 Internal Server Error",
+    code: 1,
+  });
+  try {
+    await expect(listPipelines(process.cwd())).rejects.not.toThrow(RateLimitedError);
+  } finally {
+    runSpy.mockRestore();
+    mock.restore();
   }
 });

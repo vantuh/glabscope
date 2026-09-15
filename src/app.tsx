@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { TextAttributes } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import {
   emptyModel,
   focusedJob,
-  nextPollDelay,
   reduce,
   selectedPipeline,
   shouldPollGraph,
+  shouldPollList,
   tracedJob,
 } from "./model.ts";
+import { IDLE_POLL_MS, NORMAL_POLL_MS, nextPollDelay } from "./polling.ts";
 import { isQuitKey } from "./keys.ts";
 import { probeGlab } from "./glab/probe.ts";
 import { listPipelines } from "./glab/list.ts";
 import { fetchPipelineGraph, NeedsUnavailableError } from "./glab/graph.ts";
+import { RateLimitedError } from "./glab/ratelimit.ts";
 import { spawnTrace } from "./glab/trace.ts";
-import { BUCKET_COLOR } from "./status.ts";
+import { BUCKET_COLOR, isActivePipelineStatus } from "./status.ts";
 import { buildDag, formatJobLine, visualJobs } from "./layout/dag.ts";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -24,11 +27,13 @@ const HELP_COLOR = "#9ca3af";
 export function ScreenPanel({
   title,
   footer,
+  status,
   loadingLabel,
   children,
 }: {
   title: string;
   footer: string;
+  status?: ReactNode;
   loadingLabel?: string;
   children: ReactNode;
 }) {
@@ -47,21 +52,39 @@ export function ScreenPanel({
           {children}
           {loadingLabel ? <LoadingOverlay label={loadingLabel} /> : null}
         </box>
-        {footer ? <text fg={HELP_COLOR}>{footer}</text> : null}
+        {footer ? (
+          <box flexDirection="row">
+            <text fg={HELP_COLOR}>{footer}</text>
+            {status}
+          </box>
+        ) : null}
       </box>
     </box>
   );
 }
 
-function LoadingOverlay({ label }: { label: string }) {
+function useSpinnerFrame(): number {
   const [frame, setFrame] = useState(0);
-
   useEffect(() => {
     const timer = setInterval(() => {
       setFrame((current) => (current + 1) % SPINNER_FRAMES.length);
     }, 80);
     return () => clearInterval(timer);
   }, []);
+  return frame;
+}
+
+function RefreshStatus({ label }: { label: string }) {
+  const frame = useSpinnerFrame();
+  return (
+    <text fg="#60a5fa">
+      {"  "}{SPINNER_FRAMES[frame]} {label}
+    </text>
+  );
+}
+
+function LoadingOverlay({ label }: { label: string }) {
+  const frame = useSpinnerFrame();
 
   return (
     <box
@@ -85,6 +108,7 @@ function LoadingOverlay({ label }: { label: string }) {
 export function App() {
   const renderer = useRenderer();
   const [model, dispatch] = useReducer(reduce, emptyModel);
+  const [refreshing, setRefreshing] = useState<"list" | "graph" | null>(null);
   const logProc = useRef<ReturnType<typeof Bun.spawn> | null>(null);
   const navigatingRef = useRef(model.navigating);
   navigatingRef.current = model.navigating;
@@ -109,57 +133,122 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!shouldPollGraph(model)) {
+    if (!shouldPollList(model)) {
       return;
     }
-    const iid = selectedPipeline(model)?.iid;
-    if (iid === undefined) {
-      return;
-    }
-    let delay = 4000;
+    const activeAtEntry = model.pipelines.some(
+      (row) => row.bucket === "running-or-pending",
+    );
+    let delay = activeAtEntry ? NORMAL_POLL_MS : IDLE_POLL_MS;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
       if (stopped) {
         return;
       }
+      setRefreshing("list");
       try {
-        const graph = await fetchPipelineGraph(String(iid));
+        const rows = await listPipelines();
         if (stopped) {
           return;
         }
-        dispatch({ type: "refreshGraph", graph });
-        delay = nextPollDelay(delay, false);
-        if (!shouldPollGraph({ ...model, graph, screen: "graph" })) {
-          return;
-        }
+        setRefreshing(null);
+        dispatch({ type: "pipelines", pipelines: rows });
+        delay = rows.some((row) => row.bucket === "running-or-pending")
+          ? nextPollDelay(delay, false)
+          : IDLE_POLL_MS;
       } catch (error) {
         if (stopped) {
           return;
         }
-        const rateLimited = error instanceof Error && error.name === "RateLimitedError";
-        if (!rateLimited) {
+        setRefreshing(null);
+        if (error instanceof RateLimitedError) {
+          delay = nextPollDelay(delay, true);
+        } else {
           dispatch({
-            type: "error",
+            type: "refreshError",
             message: error instanceof Error ? error.message : String(error),
-            fatal: false,
           });
-          return;
         }
-        delay = nextPollDelay(delay, true);
       }
       if (!stopped) {
         timer = setTimeout(() => void tick(), delay);
       }
     };
-    void tick();
+    if (activeAtEntry) {
+      void tick();
+    } else {
+      timer = setTimeout(() => void tick(), delay);
+    }
     return () => {
       stopped = true;
       if (timer) {
         clearTimeout(timer);
       }
+      setRefreshing(null);
     };
-  }, [model.screen, model.graph?.status, model.selectedIndex]);
+    // The second dependency is a boolean: the loop keeps its own schedule
+    // while active rows remain, and restarts only when eligibility flips.
+  }, [model.screen, shouldPollList(model)]);
+
+  useEffect(() => {
+    if (!shouldPollGraph(model)) {
+      return;
+    }
+    const graph = model.graph;
+    if (!graph) {
+      return;
+    }
+    const iid = graph.iid;
+    let delay = isActivePipelineStatus(graph.status) ? NORMAL_POLL_MS : IDLE_POLL_MS;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      if (stopped) {
+        return;
+      }
+      setRefreshing("graph");
+      try {
+        const graph = await fetchPipelineGraph(String(iid));
+        if (stopped) {
+          return;
+        }
+        setRefreshing(null);
+        dispatch({ type: "refreshGraph", graph });
+        delay = isActivePipelineStatus(graph.status)
+          ? nextPollDelay(delay, false)
+          : IDLE_POLL_MS;
+      } catch (error) {
+        if (stopped) {
+          return;
+        }
+        setRefreshing(null);
+        if (error instanceof RateLimitedError) {
+          delay = nextPollDelay(delay, true);
+        } else {
+          dispatch({
+            type: "refreshError",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      if (!stopped) {
+        timer = setTimeout(() => void tick(), delay);
+      }
+    };
+    if (isActivePipelineStatus(graph.status)) {
+      void tick();
+    } else {
+      timer = setTimeout(() => void tick(), delay);
+    }
+    return () => {
+      stopped = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      setRefreshing(null);
+    };
+  }, [model.screen, model.graph?.iid]);
 
   const traceJobId =
     model.navigating?.kind === "logs"
@@ -242,6 +331,17 @@ export function App() {
       return;
     }
     if (model.screen === "list") {
+      if (key.name === "r" && navigatingRef.current === null && !model.manualRefresh) {
+        dispatch({ type: "manualRefresh", target: "list" });
+        void listPipelines()
+          .then((rows) => dispatch({ type: "pipelines", pipelines: rows }))
+          .catch((error: unknown) =>
+            dispatch({
+              type: "refreshError",
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
+      }
       if (key.name === "up") {
         dispatch({ type: "moveList", delta: -1 });
       }
@@ -276,6 +376,17 @@ export function App() {
       }
     }
     if (model.screen === "graph" && dag) {
+      if (model.graph && key.name === "r" && navigatingRef.current === null && !model.manualRefresh) {
+        dispatch({ type: "manualRefresh", target: "graph" });
+        void fetchPipelineGraph(model.graph.iid)
+          .then((graph) => dispatch({ type: "refreshGraph", graph }))
+          .catch((error: unknown) =>
+            dispatch({
+              type: "refreshError",
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
+      }
       const order = visualJobs(dag);
       const currentId = focusedJob(model)?.id;
       const index = Math.max(0, order.findIndex((job) => job.id === currentId));
@@ -329,7 +440,20 @@ export function App() {
         footer={`${model.logDone ? "ended" : "live"} · esc back`}
       >
         <scrollbox focused flexGrow={1} stickyScroll>
-          <text>{model.logBuffer || "waiting for glab ci trace…"}</text>
+          <text>
+            {model.logTrace.runs.length === 0
+              ? "waiting for glab ci trace…"
+              : model.logTrace.runs.map((run, index) => (
+                  <span
+                    key={index}
+                    fg={run.fg}
+                    bg={run.bg}
+                    attributes={run.bold ? TextAttributes.BOLD : TextAttributes.NONE}
+                  >
+                    {run.text}
+                  </span>
+                ))}
+          </text>
         </scrollbox>
       </ScreenPanel>
     );
@@ -339,10 +463,20 @@ export function App() {
     const focusedId = focusedJob(model)?.id;
     return (
       <ScreenPanel
-        title={`pipeline ${selectedPipeline(model)?.iid ?? ""}`}
-        footer="arrows move  enter log  esc list  q quit"
-        loadingLabel={model.navigating?.kind === "logs" ? "Loading log…" : undefined}
+        title={`pipeline ${model.graph?.iid ?? ""}`}
+        footer="arrows move  enter log  r refresh  esc list  q quit"
+        status={refreshing === "graph" ? <RefreshStatus label="refreshing…" /> : undefined}
+        loadingLabel={
+          model.navigating?.kind === "logs"
+            ? "Loading log…"
+            : model.manualRefresh === "graph"
+              ? "Refreshing…"
+              : undefined
+        }
       >
+        {model.refreshWarning ? (
+          <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
+        ) : null}
         {model.graph?.truncated ? <text fg="#eab308">job list truncated at 100</text> : null}
         <scrollbox focused flexGrow={1}>
           {dag
@@ -360,9 +494,19 @@ export function App() {
   return (
     <ScreenPanel
       title="pipelines"
-      footer="enter graph  q quit"
-      loadingLabel={model.navigating?.kind === "graph" ? "Loading pipeline…" : undefined}
+      footer="enter graph  r refresh  q quit"
+      status={refreshing === "list" ? <RefreshStatus label="refreshing…" /> : undefined}
+      loadingLabel={
+        model.navigating?.kind === "graph"
+          ? "Loading pipeline…"
+          : model.manualRefresh === "list"
+            ? "Refreshing…"
+            : undefined
+      }
     >
+      {model.refreshWarning ? (
+        <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
+      ) : null}
       <scrollbox focused flexGrow={1}>
         {model.pipelines.map((row, index) => (
           <text key={row.id} fg={BUCKET_COLOR[row.bucket]}>
