@@ -20,6 +20,7 @@ import { RateLimitedError } from "./glab/ratelimit.ts";
 import { spawnTrace } from "./glab/trace.ts";
 import { BUCKET_COLOR, isActivePipelineStatus, statusIcon } from "./status.ts";
 import {
+  STRIP_WIDTH,
   buildStageGraph,
   moveFocus,
   paintConnectorStrips,
@@ -91,8 +92,27 @@ function RefreshStatus({ label }: { label: string }) {
 }
 
 const FOCUS_BORDER = "#e5e7eb";
+const MIN_CARD_INNER = 16;
+const CARD_LABEL_PREFIX = 2;
 
-function JobCard({ job, focused }: { job: JobNode; focused: boolean }) {
+function jobLabelWidth(job: JobNode): number {
+  return CARD_LABEL_PREFIX + statusIcon(job.status).length + 1 + job.name.length;
+}
+
+function columnInnerWidth(col: StageColumn): number {
+  return Math.max(MIN_CARD_INNER, col.name.length, ...col.jobs.map(jobLabelWidth));
+}
+
+function JobCard({
+  job,
+  focused,
+  innerWidth,
+}: {
+  job: JobNode;
+  focused: boolean;
+  innerWidth: number;
+}) {
+  const label = `${focused ? "▸ " : "  "}${statusIcon(job.status)} ${job.name}`;
   return (
     <box
       id={job.id}
@@ -101,11 +121,9 @@ function JobCard({ job, focused }: { job: JobNode; focused: boolean }) {
       borderColor={focused ? FOCUS_BORDER : CHROME_COLOR}
       padding={0}
       flexShrink={0}
+      width={innerWidth + 2}
     >
-      <text fg={BUCKET_COLOR[job.bucket]}>
-        {focused ? "▸ " : "  "}
-        {statusIcon(job.status)} {job.name}
-      </text>
+      <text fg={BUCKET_COLOR[job.bucket]}>{label.padEnd(innerWidth)}</text>
     </box>
   );
 }
@@ -125,16 +143,24 @@ export function GraphBody({
       {columns.map((col, index) => {
         const strip = strips[index] ?? [];
         const stripUsed = strip.some((line) => line.trim().length > 0);
+        const last = index === columns.length - 1;
+        const showStrip = stripUsed || !last;
+        const innerWidth = columnInnerWidth(col);
         return (
           <box key={`${col.name}-${index}`} flexDirection="row" flexShrink={0}>
-            <box flexDirection="column" flexShrink={0}>
+            <box flexDirection="column" flexShrink={0} width={innerWidth + 2}>
               <text fg={HELP_COLOR}>{col.name}</text>
               {col.jobs.map((job) => (
-                <JobCard key={job.id} job={job} focused={job.id === focusedId} />
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  focused={job.id === focusedId}
+                  innerWidth={innerWidth}
+                />
               ))}
             </box>
-            {stripUsed ? (
-              <box flexDirection="column" flexShrink={0}>
+            {showStrip ? (
+              <box flexDirection="column" flexShrink={0} width={STRIP_WIDTH}>
                 {strip.map((line, row) => (
                   <text key={row} fg={CHROME_COLOR}>
                     {line}

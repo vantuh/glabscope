@@ -1028,6 +1028,67 @@ test("two-stage graph renders columns of rounded job cards", async () => {
   }
 });
 
+test("GraphBody keeps equal card widths in a column and even gutters between stages", async () => {
+  const jobs = [
+    { ...jobIn("lint", "1", "success"), stage: "quality" },
+    { ...jobIn("qualityspy-v2", "2", "success"), stage: "quality" },
+    { ...jobIn("build", "3", "success"), stage: "build" },
+    { ...jobIn("owasp-dependency-check", "4", "success"), stage: "security" },
+    { ...jobIn("sast", "5", "failed"), stage: "security" },
+  ];
+  const graph = buildStageGraph(jobs, ["quality", "build", "security"]);
+  const setup = await testRender(
+    <GraphBody columns={graph.columns} edges={graph.edges} focusedId="gid://gitlab/Ci::Build/1" />,
+    { width: 120, height: 20 },
+  );
+  try {
+    await setup.renderOnce();
+    const lines = setup.captureCharFrame().split("\n");
+    const cardSpans = (line: string) => {
+      const spans: number[] = [];
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === "╭") {
+          const end = line.indexOf("╮", i);
+          if (end > i) {
+            spans.push(end - i + 1);
+            i = end;
+          }
+        }
+      }
+      return spans;
+    };
+    const gutters = (line: string) => {
+      const gaps: number[] = [];
+      let prevEnd = -1;
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === "╭" && prevEnd >= 0) {
+          gaps.push(i - prevEnd - 1);
+        }
+        if (line[i] === "╮") {
+          prevEnd = i;
+        }
+      }
+      return gaps;
+    };
+
+    const lintBar = lines[lines.findIndex((line) => line.includes("lint")) - 1] ?? "";
+    const spyBar = lines[lines.findIndex((line) => line.includes("qualityspy-v2")) - 1] ?? "";
+    expect(cardSpans(lintBar)[0]).toBe(cardSpans(spyBar)[0]);
+
+    const owaspBar = lines[lines.findIndex((line) => line.includes("owasp-dependency-check")) - 1] ?? "";
+    const sastBar = lines[lines.findIndex((line) => line.includes("sast")) - 1] ?? "";
+    expect(cardSpans(owaspBar).at(-1)).toBe(cardSpans(sastBar).at(-1));
+
+    const topRow = lines.find((line) => (line.match(/╭/g) ?? []).length >= 3) ?? "";
+    const gaps = gutters(topRow);
+    expect(gaps.length).toBe(2);
+    expect(gaps[0]).toBe(gaps[1]);
+    expect(gaps[0]).toBeGreaterThan(0);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
 test("GraphBody draws needs arrows and does not invent them for stages-only", async () => {
   const parsed = parsePipelineGraph(fixture);
   const graph = buildStageGraph(parsed.jobs, parsed.stageNames);
