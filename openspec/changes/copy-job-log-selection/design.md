@@ -34,7 +34,7 @@ Do not shell out to `pbcopy` unless the OpenTUI write fails in a follow-up; that
 `y` copies the retained visible buffer (capped at 200_000 characters), not only the on-screen rows. Waiting placeholder is not retained in `logBuffer`; empty buffer → no-op.
 
 ### 4. Footer
-Log footer becomes `live|ended · y yank · esc back` (wording can be shorter as long as `y` is visible). The `copied to clipboard` notice paints into the footer's existing `status` slot, so no new chrome row is added.
+Log footer becomes `live|ended · y yank · esc back` (wording can be shorter as long as `y` is visible). The `copied to clipboard` notice paints into the footer's existing `status` slot, so no new chrome row is added, and it is non-selectable chrome like the keymap next to it.
 
 ### 5. Feedback: optimistic notice plus a dropped selection
 `copyPlainText` reports whether it wrote anything. When it did, the log screen (a) clears the renderer selection so the body repaints unselected and (b) shows `copied to clipboard` in the footer status slot for ~1.5 s via a timer, which also clears on unmount.
@@ -46,12 +46,12 @@ Alternative: announce only after `writeText` confirms (host `written` / OSC 52 `
 ## Risks / Trade-offs
 
 - [Selection event fires while dragging] → copy only when the selection is finished (not mid-drag), and skip empty strings.
-- [Selection includes chrome] → keep title/footer as non-selectable chrome; only the log body text is selectable.
+- [Selection includes chrome] → keep title, footer, and the copy notice as non-selectable chrome; only the log body text is selectable.
 - [OSC 52 ignored inside Herdr] → prefer host clipboard write; verify manually in a Herdr pane.
 - [Live append during a drag] → copy whatever the selection object reports at finish; do not freeze the buffer for mouse copy.
-- [Tests cannot see the real clipboard] → stub `copyPlainText` and assert it was called with `logBuffer` / selected text.
+- [Tests cannot see the real clipboard] → stub `clipboardWriter` and record the writes it receives, leaving the real `copyPlainText` (and its empty-text guard) in the path.
 - [Optimistic feedback can lie] → the notice may appear when the terminal drops the write; accepted because the clipboard cannot be read back, and silence would be worse feedback. Revisit if a `pbcopy` fallback lands.
-- [Notice timer outliving the screen] → the notice renders only on the log screen and the timer is cleared on unmount, so leaving the log cannot resurrect it.
+- [Notice outliving the log screen] → the notice renders only on the log screen and its timer is cleared when the app unmounts. Returning to the log screen inside the notice's ~1.5 s lifetime shows it again; accepted as cosmetic.
 
 ## Migration Plan
 

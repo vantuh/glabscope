@@ -16,3 +16,11 @@
 - [x] 4.1 Make `copyPlainText` report whether it wrote anything (nonempty text → `true`, empty → `false`) — verify the helper unit test asserts the write and the return value for both cases
 - [x] 4.2 After a log-screen copy that wrote, clear the log selection and show a short-lived `copied to clipboard` notice in the log footer; an empty selection and `y` while waiting stay silent — verify app tests that the notice shows for both copy paths, that it clears itself with no input, and that the selection highlight is gone after a drag copy
 - [x] 4.3 Run `bun test`, `bunx tsc --noEmit`, and `openspec validate "copy-job-log-selection" --strict` — verify all complete successfully
+
+## 5. Review follow-up
+
+- [x] 5.1 Make the copy notice non-selectable chrome — verify a test that a drag starting on the visible notice produces no second copy (fails while the notice is selectable)
+- [x] 5.2 Tighten the selection assertions to the exact dragged characters, so copying the whole buffer would fail, and copy an SGR-styled line as plain text — verify `writes` equals the exact substring with no escape sequences
+- [x] 5.3 Extend the no-copy coverage to the list and attempts screens and assert that an empty selection shows no notice
+- [x] 5.4 Correct the stale design notes (tests stub `clipboardWriter`, not `copyPlainText`; notice lifetime is per log-screen visit) and name the copy notice in the chrome requirement
+- [x] 5.5 Run `bun test`, `bunx tsc --noEmit`, and `openspec validate "copy-job-log-selection" --strict` — verify all complete successfully

@@ -7,7 +7,7 @@ On the job log screen, OpenTUI owns mouse tracking, so Herdr-style copy-on-selec
 - On the log screen only, finishing a mouse drag over job-trace text copies that visible selection to the system clipboard immediately (Herdr-like: select → already copied).
 - On the log screen, pressing `y` copies the entire retained visible log buffer (plain text, no SGR), including live appends so far.
 - A copy that wrote text shows a short-lived `copied to clipboard` notice in the log footer and drops the selection highlight, for both the mouse gesture and `y`.
-- Log chrome (title, live/ended, keymap) stays out of both copies. Wheel/keyboard scroll of the framed log stays.
+- Log chrome (title, live/ended, keymap, the copy notice) stays out of both copies. Wheel/keyboard scroll of the framed log stays.
 
 ## Capabilities
 

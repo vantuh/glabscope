@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Mouse selection copies the log body
-While the operator is on the job log screen, finishing a mouse drag that selected one or more characters of job-trace body text MUST copy that selected visible text to the system clipboard. The copy MUST be plain text (no SGR). The copy MUST NOT include title, live/ended, or keymap chrome. An empty selection MUST NOT overwrite the clipboard. The same mouse-up MUST NOT copy when the operator is on any other screen.
+While the operator is on the job log screen, finishing a mouse drag that selected one or more characters of job-trace body text MUST copy that selected visible text to the system clipboard. The copy MUST be plain text (no SGR). The copy MUST NOT include any log-screen chrome: the title, live/ended, keymap, or the copy notice. An empty selection MUST NOT overwrite the clipboard. The same mouse-up MUST NOT copy when the operator is on any other screen.
 
 #### Scenario: Drag-select a stack line
 - **WHEN** the operator is on the log screen with captured trace text and finishes a mouse drag over part of that text

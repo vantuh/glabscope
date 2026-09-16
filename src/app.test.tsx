@@ -1268,13 +1268,14 @@ async function dragOver(
 async function openLog(
   setup: Awaited<ReturnType<typeof testRender>>,
   body: string,
+  visible = body.split("\n")[0] ?? "",
 ) {
   await openGraph(setup);
   traceStdout = new TextEncoder().encode(body);
   setup.mockInput.pressEnter();
   return waitForFrame(
     setup,
-    (frame) => frame.includes("y yank") && frame.includes(body.split("\n")[0] ?? ""),
+    (frame) => frame.includes("y yank") && frame.includes(visible),
     "log screen with trace body",
   );
 }
@@ -1298,12 +1299,65 @@ test("mouse drag on the log copies the selected trace text without chrome", asyn
     await waitFor(() => writes.length > 0, "clipboard write after the drag");
 
     expect(writes).toHaveLength(1);
-    expect(writes[0]).toContain("ERROR");
-    expect(writes[0]).not.toContain("y yank");
-    expect(writes[0]).not.toContain("log build");
+    // Exactly the dragged cells: copying the whole buffer instead would fail.
+    expect(writes[0]).toBe("ERROR");
     // The copied selection is dropped instead of staying highlighted.
     expect(setup.renderer.hasSelection).toBe(false);
     await waitForFrame(setup, (frame) => frame.includes("copied to clipboard"), "copied notice");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("mouse drag copies styled trace text as plain characters", async () => {
+  const { writes } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    const frame = await openLog(setup, "\u001b[31mFAIL\u001b[0m: boom\n", "FAIL: boom");
+    const lines = frame.split("\n");
+    const row = lines.findIndex((line) => line.includes("FAIL: boom"));
+    const col = (lines[row] ?? "").indexOf("FAIL");
+    expect(row).toBeGreaterThan(-1);
+    expect(col).toBeGreaterThan(-1);
+
+    await dragOver(setup, { x: col, y: row }, { x: col + 3, y: row });
+    await waitFor(() => writes.length > 0, "clipboard write after the styled drag");
+
+    expect(writes).toEqual(["FAIL"]);
+    expect(writes[0]).not.toContain("\u001b");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("the copied notice is chrome and cannot be dragged into a copy", async () => {
+  const { writes } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    const frame = await openLog(setup, "ERROR: boom\nSECOND: line\n");
+    setup.mockInput.pressKey("y");
+    await waitFor(() => writes.length > 0, "clipboard write after y");
+    const noticeFrame = await waitForFrame(
+      setup,
+      (text) => text.includes("copied to clipboard"),
+      "copied notice",
+    );
+
+    const lines = noticeFrame.split("\n");
+    const noticeRow = lines.findIndex((line) => line.includes("copied to clipboard"));
+    const noticeCol = (lines[noticeRow] ?? "").indexOf("copied to clipboard");
+    const { row: bodyRow } = errorLine(noticeFrame);
+    expect(noticeRow).toBeGreaterThan(bodyRow);
+    expect(noticeCol).toBeGreaterThan(-1);
+
+    // A drag that starts on the notice must not pull footer chrome into a
+    // second copy while it is on screen.
+    await setup.mockMouse.pressDown(noticeCol, noticeRow);
+    await setup.mockMouse.moveTo(noticeCol + 2, bodyRow);
+    await setup.mockMouse.release(noticeCol + 2, bodyRow);
+    await setup.renderOnce();
+    await Bun.sleep(20);
+    expect(writes).toHaveLength(1);
   } finally {
     setup.renderer.destroy();
   }
@@ -1335,6 +1389,7 @@ test("mouse drag with an empty selection leaves the clipboard alone", async () =
     await setup.renderOnce();
     await Bun.sleep(20);
     expect(writes).toEqual([]);
+    expect(setup.captureCharFrame()).not.toContain("copied to clipboard");
   } finally {
     setup.renderer.destroy();
   }
@@ -1435,6 +1490,50 @@ test("log chrome is not selectable, so a drag starting on it copies nothing", as
       await Bun.sleep(20);
       expect(writes).toEqual([]);
     }
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("mouse drag on the list and attempts screens does not copy", async () => {
+  const { writes } = recordClipboardWrites();
+  graphGate.resolve(
+    graphFor("SUCCESS", [
+      { ...jobIn("lint", "10", "failed"), retried: true },
+      jobIn("lint", "12", "success"),
+    ]),
+  );
+  const setup = await mountApp();
+  try {
+    // Pipeline list rows are selectable text, but this requirement does not
+    // add copy-on-select there.
+    const listRow = setup
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((line) => line.includes("#42"));
+    expect(listRow).toBeGreaterThan(-1);
+    await dragOver(setup, { x: 4, y: listRow }, { x: 14, y: listRow });
+    await setup.renderOnce();
+    await Bun.sleep(20);
+    expect(writes).toEqual([]);
+
+    // Same for attempt rows on the way into the log.
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("pipeline 5"), "graph screen");
+    setup.mockInput.pressEnter();
+    const attemptsFrame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("attempts lint"),
+      "attempts screen",
+    );
+    const attemptRow = attemptsFrame
+      .split("\n")
+      .findIndex((line) => line.includes("#12"));
+    expect(attemptRow).toBeGreaterThan(-1);
+    await dragOver(setup, { x: 4, y: attemptRow }, { x: 14, y: attemptRow });
+    await setup.renderOnce();
+    await Bun.sleep(20);
+    expect(writes).toEqual([]);
   } finally {
     setup.renderer.destroy();
   }

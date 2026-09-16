@@ -98,7 +98,7 @@ function RefreshStatus({ label }: { label: string }) {
 
 function CopiedNotice() {
   return (
-    <text fg={BUCKET_COLOR.success}>
+    <text fg={BUCKET_COLOR.success} selectable={false}>
       {"  "}copied to clipboard
     </text>
   );
