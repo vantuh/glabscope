@@ -1,6 +1,6 @@
 # glab-pipeline-viewer
 
-Personal terminal UI for GitLab pipelines on top of [`glab`](https://gitlab.com/gitlab-org/cli). Nested screens: pipeline list → job-dependency graph → job log.
+Personal terminal UI for GitLab pipelines on top of [`glab`](https://gitlab.com/gitlab-org/cli). Nested screens: pipeline list → job graph → job attempts (when a card was retried) → job log.
 
 ## Prerequisites
 
@@ -25,4 +25,6 @@ cd /path/to/your-gitlab-project
 bun /path/to/glab-pipeline-viewer/src/index.tsx
 ```
 
-Keys: `q` quits, arrows move, Enter drills in, Esc goes back (log → graph → list).
+The job graph uses Nerd Font status icons, so run it in a terminal whose font is a Nerd Font (otherwise the glyphs render as tofu).
+
+Keys: `q` quits, arrows move (up/down in a stage, left/right across stages), Enter drills in (job attempts when a card was retried, otherwise the log), Esc goes back (log → attempts if open → graph → list).
