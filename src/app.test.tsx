@@ -3019,3 +3019,33 @@ test("no prompt opens while the graph is mid-refresh behind its overlay", async 
     setup.renderer.destroy();
   }
 });
+
+test("an action in flight blocks a different one on another job", async () => {
+  graphGate.resolve(
+    graphFor("MANUAL", [
+      { ...jobIn("deploy", "99", "manual"), stage: "deploy" },
+      { ...jobIn("lint", "10", "failed"), stage: "test" },
+    ]),
+  );
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    playGate = Promise.withResolvers();
+    await askAndConfirm(setup);
+    await waitFor(() => playCalls.length === 1, "run call");
+    await waitForFrame(setup, (f) => f.includes("running…"), "in-flight run mark");
+
+    // Another job, and the other action, while the run is still unanswered.
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    await waitForFrame(setup, (f) => focusedCard(f, statusIcon("failed"), "lint"), "lint focused");
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await Bun.sleep(20);
+    await setup.renderOnce();
+    expect(retryCalls).toEqual([]);
+    expect(playCalls).toEqual(["99"]);
+    expect(setup.captureCharFrame()).not.toContain("enter confirm");
+  } finally {
+    playGate?.resolve({ jobId: null });
+    setup.renderer.destroy();
+  }
+});
