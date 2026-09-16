@@ -20,7 +20,7 @@ context: |
   - Four status buckets only: success, failed, running-or-pending, other.
   - DAG is needs/arrows, not stage columns only; same pipeline only (bridge = one node, no child drill-down).
   - Enter on a historical list row opens that pipeline id, not “latest on branch”.
-  - v1 out of scope unless a change explicitly expands it: retry/cancel/play, artifacts, MR entry, YAML visualize.
+  - v1 out of scope unless a change explicitly expands it: cancel/play, artifacts, MR entry, YAML visualize.
 
 rules:
   proposal:

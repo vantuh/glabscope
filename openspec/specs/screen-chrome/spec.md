@@ -22,7 +22,7 @@ Every screen the operator can land on (boot, error, pipeline list, job graph, jo
 - **THEN** the frame and title stay muted while success, failed, running-or-pending, and other row colors remain distinguishable from the chrome
 
 ### Requirement: Keymap in chrome, not mixed into content
-Each framed screen MUST show the keys that work on that screen in a dim help line that is part of the chrome (footer or title area), not mixed into the first content row. Transient status text MUST NOT be appended to that help line: the help line's own text MUST be the same whether or not a status is pending.
+Each framed screen MUST show the keys that work on that screen in a dim help line that is part of the chrome (footer or title area), not mixed into the first content row. Transient status text MUST NOT be appended to that help line: the help line's own text MUST be the same whether or not a status is pending. A key that only applies to some jobs MUST still be listed on the screens where it can apply.
 
 #### Scenario: List help
 - **WHEN** the pipeline list is visible
@@ -30,15 +30,23 @@ Each framed screen MUST show the keys that work on that screen in a dim help lin
 
 #### Scenario: Graph help
 - **WHEN** the job graph is visible
-- **THEN** move, open log, back, and quit appear in the dim chrome help line
+- **THEN** move, open log, refresh, retry, back, and quit appear in the dim chrome help line
 
 #### Scenario: Log help
 - **WHEN** the job log is visible
-- **THEN** back (and live vs ended) are visible in the chrome, and the trace body is only log text
+- **THEN** retry, back, and live vs ended are visible in the chrome, and the trace body is only log text
+
+#### Scenario: Attempts help
+- **WHEN** the attempts list is visible
+- **THEN** open log, retry, back, and quit appear in the dim chrome help line
 
 #### Scenario: A status does not extend the help line
 - **WHEN** a transient status is visible on a screen and then clears
 - **THEN** the help line text is unchanged, with no status word inside it in either state
+
+#### Scenario: Retry key pressed on a job that cannot be retried
+- **WHEN** the operator presses the retry key on a job that is not failed or canceled
+- **THEN** the reason is shown as a non-fatal message in the screen content, and the dim help line keeps listing the retry key
 
 ### Requirement: Transient status has its own area at the right edge
 Each framed screen MUST render transient status in a status area that is a separate chrome element from the key help line: both share the same chrome row, the key help stays at the left edge, and the status area is pinned to the right edge of that row. On a screen with no transient status, the row MUST contain the key help line only, with no empty status placeholder. The status area MUST keep the status's own color rather than the muted chrome color. Persistent diagnostics MUST NOT move into the status area.
