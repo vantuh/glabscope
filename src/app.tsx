@@ -891,7 +891,9 @@ export function App() {
       }
       if (isOpenKey(key)) {
         const job = focusedJob(model);
-        if (job) {
+        // The chooser route is part of the one-open-at-a-time rule too: an open
+        // still in flight must not push the operator off the graph either.
+        if (job && !openInFlightRef.current) {
           // A card with several attempts stands for none of them in
           // particular, so nothing opens until the operator picks one.
           if (jobAttempts(model.graph.jobs, job).length > 1) {
