@@ -1,11 +1,12 @@
 ## 1. Spike Against the Operator's GitLab
 
 - [ ] 1.1 Spike `glab ci trigger <job-id>` on a real project of the operator's GitLab: pick a pipeline with a waiting manual job, trigger it by numeric id with no `-p` and no `-b`, and record the exact stdout line as the fixture for task 2.1. Verify by comparing the printed id, status, and ref with what GitLab shows for that pipeline, and by noting whether the printed id equals the id passed in (the in-place enqueue) or a new attempt id.
+Not done: the operator chose to skip the live spike, because every waiting manual job reachable in their projects is a `deploy_*` job (`qa/aqa/mobile-tests`, pipeline 1459195) and running one deploys to a QA cluster. Task 2.1 therefore builds its fixture from the format string in the installed glab 1.117.0 binary, the same provenance the retry fixture uses, and the id-semantics claim stays unverified against a live GitLab until the operator runs `glab ci trigger` themselves.
 
 ## 2. Play Command Wrapper
 
-- [ ] 2.1 Add `src/glab/play.ts` with `playArgv(jobId)`, `parseTriggeredJobId(stdout)`, and `playJob(jobId, cwd)` calling `glab ci trigger <job-id>` through `runGlab`, beside the module's doc comment naming that exact command. Verify `src/glab/play.test.ts` covers the fixture stdout from 1.1, stdout wrapped in SGR sequences, a nonzero exit surfacing stderr, a stdout without the pattern returning no id, and a non-numeric job id rejected before any process is spawned.
-- [ ] 2.2 Add `isPlayableJob(job)` to the same module: status `manual` only, and never a bridge job. Verify unit tests cover manual, skipped, scheduled, created, running, pending, success, failed, and canceled, plus a bridge job whose status is manual.
+- [x] 2.1 Add `src/glab/play.ts` with `playArgv(jobId)`, `parseTriggeredJobId(stdout)`, and `playJob(jobId, cwd)` calling `glab ci trigger <job-id>` through `runGlab`, beside the module's doc comment naming that exact command. Verify `src/glab/play.test.ts` covers the fixture stdout from 1.1, stdout wrapped in SGR sequences, a nonzero exit surfacing stderr, a stdout without the pattern returning no id, and a non-numeric job id rejected before any process is spawned. (`bun test src/glab/play.test.ts`: 9 pass.)
+- [x] 2.2 Add `isPlayableJob(job)` to the same module: status `manual` only, and never a bridge job. Verify unit tests cover manual, skipped, scheduled, created, running, pending, success, failed, and canceled, plus a bridge job whose status is manual.
 
 ## 3. Job Action Policy in the Model
 
