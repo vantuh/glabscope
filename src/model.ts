@@ -1,4 +1,5 @@
 import type { PipelineRow } from "./glab/list.ts";
+import { isRetryableJob } from "./glab/retry.ts";
 import { jobAttempts, latestJobs, type JobNode, type PipelineGraph } from "./glab/graph.ts";
 import { buildStageColumns } from "./layout/stage-graph.ts";
 import { isActivePipelineStatus } from "./status.ts";
@@ -18,6 +19,10 @@ export type AppModel = {
   refreshWarning: string | null;
   /** One-shot manual refresh in flight, per screen. */
   manualRefresh: "list" | "graph" | null;
+  /** One restart in flight, and the screen it was started from. */
+  retry: { jobId: string; screen: Screen } | null;
+  /** Non-fatal retry notice: a local refusal or a GitLab rejection. */
+  retryMessage: string | null;
   booted: boolean;
   pipelines: PipelineRow[];
   selectedIndex: number;
@@ -38,6 +43,8 @@ export const emptyModel: AppModel = {
   errorFatal: false,
   refreshWarning: null,
   manualRefresh: null,
+  retry: null,
+  retryMessage: null,
   booted: false,
   pipelines: [],
   selectedIndex: 0,
@@ -61,6 +68,9 @@ export type Action =
   | { type: "refreshGraph"; graph: PipelineGraph }
   | { type: "refreshError"; message: string }
   | { type: "manualRefresh"; target: "list" | "graph" }
+  | { type: "startRetry"; job: JobNode }
+  | { type: "retrySucceeded"; jobId: string | null }
+  | { type: "retryFailed"; message: string }
   | { type: "focusJob"; id: string }
   | { type: "openAttempts" }
   | { type: "focusAttempt"; id: string }
@@ -151,6 +161,44 @@ function attemptFocusIndex(graph: PipelineGraph, card: JobNode | undefined, id: 
   return index === -1 ? 0 : index;
 }
 
+const NEW_ATTEMPT_UNFOLLOWED = "retried, but the new attempt could not be followed";
+
+function retryRefusalMessage(job: Pick<JobNode, "isBridge">): string {
+  return job.isBridge
+    ? "this job cannot be retried here"
+    : "only failed or canceled jobs can be retried";
+}
+
+/** Point the log at the new attempt; the trace effect respawns for that id. */
+function followRetriedAttempt(model: AppModel, jobId: string): AppModel {
+  const previous = tracedJob(model);
+  const matched = model.graph ? visibleMatchIndex(model.graph, jobId, previous) : -1;
+  return {
+    ...model,
+    retry: null,
+    retryMessage: null,
+    logJobId: jobId,
+    logBuffer: "",
+    logTrace: emptyLogTrace(),
+    logDone: false,
+    focusedJobIndex: matched === -1 ? model.focusedJobIndex : matched,
+  };
+}
+
+/** The restart happened but named no attempt, so the graph takes over. */
+function unfollowedRetriedAttempt(model: AppModel): AppModel {
+  const previous = tracedJob(model);
+  const matched = model.graph ? visibleMatchIndex(model.graph, previous?.id, previous) : -1;
+  return {
+    ...model,
+    retry: null,
+    retryMessage: NEW_ATTEMPT_UNFOLLOWED,
+    screen: "graph",
+    logJobId: null,
+    focusedJobIndex: matched === -1 ? model.focusedJobIndex : matched,
+  };
+}
+
 /**
  * Keep the selection on the same pipeline across refreshed rows: first by
  * stable pipeline id, falling back to the nearest valid row when the selected
@@ -191,6 +239,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
     case "moveList":
       return {
         ...model,
+        retryMessage: null,
         selectedIndex: clamp(
           model.selectedIndex + action.delta,
           model.pipelines.length,
@@ -209,6 +258,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
         errorFatal: false,
         refreshWarning: null,
         manualRefresh: null,
+        retryMessage: null,
         navigating: null,
       };
     case "refreshGraph": {
@@ -224,6 +274,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
           focusedJobIndex: matched !== -1 ? matched : model.focusedJobIndex,
           refreshWarning: null,
           manualRefresh: null,
+          retryMessage: null,
         };
       }
       const focusedJobIndex = visibleFocusIndex(action.graph, current?.id, current);
@@ -236,25 +287,49 @@ export function reduce(model: AppModel, action: Action): AppModel {
         focusedAttemptIndex: attemptFocusIndex(action.graph, nextCard, currentAttempt?.id),
         refreshWarning: null,
         manualRefresh: null,
+        retryMessage: null,
       };
     }
     case "refreshError":
       return { ...model, refreshWarning: action.message, manualRefresh: null };
     case "manualRefresh":
       return { ...model, manualRefresh: action.target };
+    case "startRetry": {
+      if (model.retry) {
+        return model;
+      }
+      if (!isRetryableJob(action.job)) {
+        return { ...model, retryMessage: retryRefusalMessage(action.job) };
+      }
+      return {
+        ...model,
+        retry: { jobId: action.job.numericId, screen: model.screen },
+        retryMessage: null,
+      };
+    }
+    case "retrySucceeded": {
+      if (model.retry?.screen === "logs" && model.screen === "logs") {
+        return action.jobId
+          ? followRetriedAttempt(model, action.jobId)
+          : unfollowedRetriedAttempt(model);
+      }
+      return { ...model, retry: null };
+    }
+    case "retryFailed":
+      return { ...model, retry: null, retryMessage: action.message };
     case "focusJob": {
       const index = model.graph?.jobs.findIndex((job) => job.id === action.id) ?? -1;
       if (index < 0) {
         return model;
       }
-      return { ...model, focusedJobIndex: index };
+      return { ...model, focusedJobIndex: index, retryMessage: null };
     }
     case "openAttempts": {
       const job = focusedJob(model);
       if (!job || !model.graph || jobAttempts(model.graph.jobs, job).length < 2) {
         return model;
       }
-      return { ...model, screen: "attempts", focusedAttemptIndex: 0 };
+      return { ...model, screen: "attempts", focusedAttemptIndex: 0, retryMessage: null };
     }
     case "focusAttempt": {
       const card = focusedJob(model);
@@ -265,7 +340,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
       if (index < 0) {
         return model;
       }
-      return { ...model, focusedAttemptIndex: index };
+      return { ...model, focusedAttemptIndex: index, retryMessage: null };
     }
     case "openLogs": {
       const job = model.screen === "attempts" ? focusedAttempt(model) : focusedJob(model);
@@ -276,6 +351,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
         ...model,
         navigating: { kind: "logs", jobId: job.numericId },
         logBackScreen: model.screen === "attempts" ? "attempts" : "graph",
+        retryMessage: null,
       };
     }
     case "logsReady": {
@@ -290,6 +366,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
         logTrace: emptyLogTrace(),
         logDone: false,
         navigating: null,
+        retryMessage: null,
       };
     }
     case "logChunk": {
@@ -314,6 +391,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
           logTrace: model.logTrace,
           logDone: model.logDone,
           manualRefresh: null,
+          retryMessage: null,
         };
       }
       if (model.screen === "attempts") {
@@ -321,6 +399,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
           ...model,
           screen: "graph",
           manualRefresh: null,
+          retryMessage: null,
         };
       }
       if (model.screen === "graph") {
@@ -329,6 +408,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
           screen: "list",
           refreshWarning: null,
           manualRefresh: null,
+          retryMessage: null,
         };
       }
       return model;

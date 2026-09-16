@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { emptyModel, focusedAttempt, focusedJob, reduce, selectedPipeline, shouldPollGraph, shouldPollList } from "./model.ts";
+import { emptyModel, focusedAttempt, focusedJob, reduce, selectedPipeline, shouldPollGraph, shouldPollList, type AppModel } from "./model.ts";
 import { emptyLogTrace } from "./log-text.ts";
 import type { JobNode, PipelineGraph } from "./glab/graph.ts";
 import type { PipelineRow } from "./glab/list.ts";
@@ -419,4 +419,171 @@ test("graph polling continues on the attempts screen", () => {
   let model = reduce(emptyModel, { type: "openGraph", graph: graph([failed, latest]) });
   model = reduce(model, { type: "openAttempts" });
   expect(shouldPollGraph(model)).toBe(true);
+});
+
+function retryableJob(name: string, numericId = name, status = "failed"): JobNode {
+  return {
+    ...job(name),
+    id: `gid://gitlab/Ci::Build/${numericId}`,
+    numericId,
+    status,
+    bucket: status === "canceled" ? "other" : "failed",
+  };
+}
+
+function graphWithFailedJob(): PipelineGraph {
+  return graph([retryableJob("lint", "10")], "FAILED");
+}
+
+test("startRetry marks one restart in flight and clears the previous notice", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10", "success") });
+  expect(model.retryMessage).toBe("only failed or canceled jobs can be retried");
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10") });
+  expect(model.retry).toEqual({ jobId: "10", screen: "graph" });
+  expect(model.retryMessage).toBeNull();
+});
+
+test("a second retry while one is in flight is rejected", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10") });
+  const inFlight = model;
+  expect(reduce(inFlight, { type: "startRetry", job: retryableJob("lint", "10") })).toEqual(
+    inFlight,
+  );
+});
+
+test("startRetry refuses a job whose status is not retryable", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  for (const status of ["success", "running", "pending", "skipped", "manual", "created"]) {
+    const refused = reduce(model, { type: "startRetry", job: retryableJob("lint", "10", status) });
+    expect(refused.retry).toBeNull();
+    expect(refused.retryMessage).toBe("only failed or canceled jobs can be retried");
+  }
+  const canceled = reduce(model, { type: "startRetry", job: retryableJob("lint", "10", "canceled") });
+  expect(canceled.retry).toEqual({ jobId: "10", screen: "graph" });
+});
+
+test("startRetry refuses a bridge job in its own words", () => {
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([retryableJob("trigger", "10")], "FAILED"),
+  });
+  const bridge = { ...retryableJob("trigger", "10"), kind: "BRIDGE", isBridge: true };
+  model = reduce(model, { type: "startRetry", job: bridge });
+  expect(model.retry).toBeNull();
+  expect(model.retryMessage).toBe("this job cannot be retried here");
+});
+
+test("a rejected retry clears the in-flight mark and keeps a non-fatal message", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10") });
+  model = reduce(model, { type: "retryFailed", message: "job is not retryable" });
+  expect(model.retry).toBeNull();
+  expect(model.retryMessage).toBe("job is not retryable");
+  expect(model.error).toBeNull();
+  expect(model.errorFatal).toBe(false);
+  expect(model.graph).not.toBeNull();
+  expect(model.screen).toBe("graph");
+});
+
+test("navigation and a successful graph refresh clear the retry notice", () => {
+  const refused = reduce(emptyModel, {
+    type: "startRetry",
+    job: retryableJob("lint", "10", "success"),
+  });
+  expect(refused.retryMessage).not.toBeNull();
+
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10", "success") });
+  expect(reduce(model, { type: "focusJob", id: "gid://gitlab/Ci::Build/10" }).retryMessage).toBeNull();
+
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10", "success") });
+  expect(reduce(model, { type: "refreshGraph", graph: graphWithFailedJob() }).retryMessage).toBeNull();
+});
+
+test("a graph refresh while the restart runs leaves the retry in flight", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10") });
+  const refreshed = reduce(model, {
+    type: "refreshGraph",
+    graph: graph([retryableJob("lint", "10"), retryableJob("lint", "12")], "RUNNING"),
+  });
+  expect(refreshed.retry).toEqual({ jobId: "10", screen: "graph" });
+});
+
+test("retrySucceeded on the graph clears the in-flight mark", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10") });
+  model = reduce(model, { type: "retrySucceeded", jobId: "12" });
+  expect(model.retry).toBeNull();
+  expect(model.retryMessage).toBeNull();
+  expect(model.screen).toBe("graph");
+});
+
+function openLogOn(model: AppModel, id: string): AppModel {
+  const focused = reduce(model, { type: "focusJob", id });
+  return reduce(reduce(focused, { type: "openLogs" }), { type: "logsReady" });
+}
+
+test("retrySucceeded re-attaches the log screen to the new attempt", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = openLogOn(model, "gid://gitlab/Ci::Build/10");
+  model = reduce(model, { type: "logChunk", chunk: "boom\n" });
+  model = reduce(model, { type: "logDone" });
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10") });
+  model = reduce(model, { type: "retrySucceeded", jobId: "12" });
+
+  expect(model.screen).toBe("logs");
+  expect(model.logJobId).toBe("12");
+  expect(model.logBuffer).toBe("");
+  expect(model.logTrace).toEqual(emptyLogTrace());
+  expect(model.logDone).toBe(false);
+  expect(model.retry).toBeNull();
+  expect(model.retryMessage).toBeNull();
+  expect(focusedJob(model)?.numericId).toBe("10");
+});
+
+test("re-attaching the trace moves graph focus to the job's new attempt", () => {
+  const oldAttempt = { ...retryableJob("lint", "10"), retried: true };
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([oldAttempt, retryableJob("lint", "12")], "FAILED"),
+  });
+  model = reduce(model, { type: "openAttempts" });
+  model = reduce(model, { type: "focusAttempt", id: "gid://gitlab/Ci::Build/10" });
+  model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "logsReady" });
+  expect(model.logJobId).toBe("10");
+
+  model = reduce(model, { type: "startRetry", job: oldAttempt });
+  model = reduce(model, { type: "retrySucceeded", jobId: "14" });
+  expect(model.logJobId).toBe("14");
+  expect(focusedJob(model)?.numericId).toBe("12");
+});
+
+test("a retry whose new attempt cannot be identified returns to the graph", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = openLogOn(model, "gid://gitlab/Ci::Build/10");
+  model = reduce(model, { type: "logChunk", chunk: "boom\n" });
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10") });
+  model = reduce(model, { type: "retrySucceeded", jobId: null });
+
+  expect(model.screen).toBe("graph");
+  expect(model.logJobId).toBeNull();
+  expect(model.retry).toBeNull();
+  expect(model.retryMessage).toBe("retried, but the new attempt could not be followed");
+  expect(focusedJob(model)?.numericId).toBe("10");
+});
+
+test("a second retry from the log while one is in flight is rejected", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = openLogOn(model, "gid://gitlab/Ci::Build/10");
+  model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10") });
+  expect(model.retry).toEqual({ jobId: "10", screen: "logs" });
+  const inFlight = model;
+  expect(reduce(inFlight, { type: "startRetry", job: retryableJob("lint", "10") })).toEqual(
+    inFlight,
+  );
+  expect(reduce(inFlight, { type: "retrySucceeded", jobId: "12" }).logJobId).toBe("12");
 });
