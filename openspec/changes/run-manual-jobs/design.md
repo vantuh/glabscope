@@ -92,7 +92,7 @@ The prompt state lives in the model rather than in component state so that "one 
 
 **10. The prompt is an overlay inside the existing content box, and it owns the keyboard while it is open.**
 
-A `ConfirmPrompt` renders like `LoadingOverlay` — absolutely positioned inside `ScreenPanel`'s content box, above the screen's own content — but with two lines: the question (`retry job <name>?`, `run job <name>?`) and its keys (`enter confirm  esc cancel`), in the muted chrome color seen elsewhere. `ScreenPanel` gains an optional prompt node next to its existing `loadingLabel`, and the graph, attempts and log panels pass it from `model.confirm`.
+A `ConfirmPrompt` renders like `LoadingOverlay` — absolutely positioned inside `ScreenPanel`'s content box, above the screen's own content — but with two lines: the question (`retry job <name>?`, `run job <name>?`) and its keys (`enter confirm  esc cancel`). The question uses the help gray and the keys the frame gray, so the prompt reads as chrome; the success, failed and running-or-pending colors stay reserved for job state. (In this codebase the help gray is the same hex as the `other` bucket, which is why the requirement names the three state-carrying colors instead of all four buckets.) `ScreenPanel` gains an optional prompt node next to its existing `loadingLabel`, and the graph, attempts and log panels pass it from `model.confirm`.
 
 The prompt is not transient status, so it stays out of the chrome status area and the key-help line keeps listing the screen's own keys, which is what the screen-chrome requirement already demands.
 

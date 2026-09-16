@@ -2622,6 +2622,17 @@ test("the confirmation prompt asks before a retry and names the job", async () =
     expect(frame).toContain("pipeline 5");
     expect(retryCalls).toEqual([]);
 
+    // Chrome colors only: the prompt never borrows a status-bucket color.
+    const question = rowSpans(setup, "retry job build?")[0];
+    const keys = rowSpans(setup, "enter confirm")[0];
+    const stateColors = [BUCKET_COLOR.success, BUCKET_COLOR.failed, BUCKET_COLOR["running-or-pending"]].map(
+      hexRgb,
+    );
+    expect(question?.fg.toInts().slice(0, 3)).toEqual(hexRgb("#9ca3af"));
+    expect(keys?.fg.toInts().slice(0, 3)).toEqual(hexRgb("#4b5563"));
+    expect(stateColors).not.toContainEqual(question?.fg.toInts().slice(0, 3));
+    expect(stateColors).not.toContainEqual(keys?.fg.toInts().slice(0, 3));
+
     setup.mockInput.pressEnter();
     await waitFor(() => retryCalls.length === 1, "confirmed retry");
     expect(retryCalls).toEqual(["99"]);
