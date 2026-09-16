@@ -26,10 +26,13 @@ export function clipboardWriter(renderer: CliRenderer): (text: string) => void {
 
 /**
  * Copy plain text to the system clipboard, skipping empty text so an empty
- * selection never replaces what the operator already had.
+ * selection never replaces what the operator already had. Returns whether
+ * anything was written, so callers can show feedback only for a real copy.
  */
-export function copyPlainText(text: string, write: (text: string) => void): void {
-  if (text) {
-    write(text);
+export function copyPlainText(text: string, write: (text: string) => void): boolean {
+  if (!text) {
+    return false;
   }
+  write(text);
+  return true;
 }

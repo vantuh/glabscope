@@ -79,7 +79,7 @@ function fakeProc(): ReturnType<typeof Bun.spawn> {
 
 import type { CapturedSpan } from "@opentui/core";
 import { testRender } from "@opentui/react/test-utils";
-import { App, GraphBody, ScreenPanel } from "./app.tsx";
+import { App, COPIED_NOTICE_MS, GraphBody, ScreenPanel } from "./app.tsx";
 import { buildStageGraph } from "./layout/stage-graph.ts";
 import fixture from "./fixtures/pipeline-jobs-needs.json";
 import { parsePipelineGraph } from "./glab/graph.ts";
@@ -1301,6 +1301,9 @@ test("mouse drag on the log copies the selected trace text without chrome", asyn
     expect(writes[0]).toContain("ERROR");
     expect(writes[0]).not.toContain("y yank");
     expect(writes[0]).not.toContain("log build");
+    // The copied selection is dropped instead of staying highlighted.
+    expect(setup.renderer.hasSelection).toBe(false);
+    await waitForFrame(setup, (frame) => frame.includes("copied to clipboard"), "copied notice");
   } finally {
     setup.renderer.destroy();
   }
@@ -1349,6 +1352,7 @@ test("y on the log yanks the whole retained buffer and names itself in the foote
     await waitFor(() => writes.length > 0, "clipboard write after y");
     expect(copyPlainTextSpy).toHaveBeenCalledWith(body, expect.anything());
     expect(writes).toEqual([body]);
+    await waitForFrame(setup, (frame) => frame.includes("copied to clipboard"), "copied notice");
   } finally {
     setup.renderer.destroy();
   }
@@ -1370,6 +1374,7 @@ test("y while the log is still waiting leaves the clipboard alone", async () => 
     await setup.renderOnce();
     await Bun.sleep(20);
     expect(writes).toEqual([]);
+    expect(setup.captureCharFrame()).not.toContain("copied to clipboard");
   } finally {
     setup.renderer.destroy();
   }
@@ -1384,6 +1389,26 @@ test("y on the graph does not copy log text", async () => {
     await setup.renderOnce();
     await Bun.sleep(20);
     expect(writes).toEqual([]);
+    expect(setup.captureCharFrame()).not.toContain("copied to clipboard");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("the copied notice clears itself without further input", async () => {
+  const { writes } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    await openLog(setup, "ERROR: boom\n");
+    setup.mockInput.pressKey("y");
+    await waitFor(() => writes.length > 0, "clipboard write after y");
+    await waitForFrame(setup, (frame) => frame.includes("copied to clipboard"), "copied notice");
+
+    await Bun.sleep(COPIED_NOTICE_MS + 250);
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).not.toContain("copied to clipboard");
+    expect(frame).toContain("ended · y yank · esc back");
   } finally {
     setup.renderer.destroy();
   }

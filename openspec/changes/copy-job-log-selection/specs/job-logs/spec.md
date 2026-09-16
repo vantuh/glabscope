@@ -29,3 +29,29 @@ While the operator is on the job log screen, pressing `y` MUST copy the entire r
 #### Scenario: Yank does not fire on the graph
 - **WHEN** the operator is on the job graph and presses `y`
 - **THEN** the clipboard is not updated by this action
+
+### Requirement: Selection clears after a copy
+While the operator is on the job log screen, finishing a mouse drag that copied selected trace text MUST clear the selection so the log body returns to its unselected appearance. Only a drag that actually copied text clears anything; a drag that copied nothing leaves the log body unselected too.
+
+#### Scenario: Drag-select a stack line
+- **WHEN** the operator finishes a mouse drag that copied part of the trace body
+- **THEN** the log body renders with no selection highlight
+
+### Requirement: Copy feedback
+Log-screen chrome MUST show a short-lived `copied to clipboard` notice whenever a copy on that screen writes text, whether it came from a mouse selection or from `y`. The notice MUST clear itself without operator input. A copy that writes nothing (an empty selection, or `y` while no trace bytes have been retained) MUST NOT show the notice.
+
+#### Scenario: Mouse selection copy is announced
+- **WHEN** the operator finishes a mouse drag that copied part of the trace body
+- **THEN** the log footer shows `copied to clipboard`
+
+#### Scenario: Yank is announced
+- **WHEN** the operator presses `y` on the log screen with a non-empty retained buffer
+- **THEN** the log footer shows `copied to clipboard`
+
+#### Scenario: The notice clears itself
+- **WHEN** the notice has been shown and the operator does nothing further
+- **THEN** the notice disappears without any input
+
+#### Scenario: Nothing copied, nothing announced
+- **WHEN** the operator presses `y` while the log screen still shows the waiting message
+- **THEN** the clipboard is unchanged and no `copied to clipboard` notice appears

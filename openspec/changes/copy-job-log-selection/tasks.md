@@ -10,3 +10,9 @@
 ## 3. Verification
 
 - [x] 3.1 Run `bun test`, `bunx tsc --noEmit`, and `openspec validate "copy-job-log-selection" --strict` — verify all complete successfully
+
+## 4. Copy feedback and selection reset
+
+- [x] 4.1 Make `copyPlainText` report whether it wrote anything (nonempty text → `true`, empty → `false`) — verify the helper unit test asserts the write and the return value for both cases
+- [x] 4.2 After a log-screen copy that wrote, clear the log selection and show a short-lived `copied to clipboard` notice in the log footer; an empty selection and `y` while waiting stay silent — verify app tests that the notice shows for both copy paths, that it clears itself with no input, and that the selection highlight is gone after a drag copy
+- [x] 4.3 Run `bun test`, `bunx tsc --noEmit`, and `openspec validate "copy-job-log-selection" --strict` — verify all complete successfully

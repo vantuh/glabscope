@@ -32,6 +32,8 @@ import type { DagEdge } from "./layout/dag.ts";
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const CHROME_COLOR = "#4b5563";
 const HELP_COLOR = "#9ca3af";
+/** How long the `copied to clipboard` footer notice stays up. */
+export const COPIED_NOTICE_MS = 1500;
 
 export function ScreenPanel({
   title,
@@ -90,6 +92,14 @@ function RefreshStatus({ label }: { label: string }) {
   return (
     <text fg="#60a5fa">
       {"  "}{SPINNER_FRAMES[frame]} {label}
+    </text>
+  );
+}
+
+function CopiedNotice() {
+  return (
+    <text fg={BUCKET_COLOR.success}>
+      {"  "}copied to clipboard
     </text>
   );
 }
@@ -210,11 +220,34 @@ export function App() {
   navigatingRef.current = model.navigating;
   const focusedId = focusedJob(model)?.id;
   const writeClipboard = useMemo(() => clipboardWriter(renderer), [renderer]);
+  const [copiedNotice, setCopiedNotice] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const announceCopy = () => {
+    setCopiedNotice(true);
+    if (copiedTimer.current) {
+      clearTimeout(copiedTimer.current);
+    }
+    copiedTimer.current = setTimeout(() => setCopiedNotice(false), COPIED_NOTICE_MS);
+  };
+
+  useEffect(
+    () => () => {
+      if (copiedTimer.current) {
+        clearTimeout(copiedTimer.current);
+      }
+    },
+    [],
+  );
 
   // Only the log body is copy-on-select; every other screen stays as before.
   useSelectionHandler((selection) => {
-    if (model.screen === "logs") {
-      copyPlainText(selection.getSelectedText(), writeClipboard);
+    if (model.screen !== "logs") {
+      return;
+    }
+    if (copyPlainText(selection.getSelectedText(), writeClipboard)) {
+      renderer.clearSelection();
+      announceCopy();
     }
   });
 
@@ -530,7 +563,9 @@ export function App() {
       }
     }
     if (model.screen === "logs" && key.name === "y") {
-      copyPlainText(model.logBuffer, writeClipboard);
+      if (copyPlainText(model.logBuffer, writeClipboard)) {
+        announceCopy();
+      }
     }
     if (model.screen === "attempts" && model.graph) {
       const card = focusedJob(model);
@@ -585,6 +620,7 @@ export function App() {
       <ScreenPanel
         title={`log ${job?.name ?? "job"}`}
         footer={`${model.logDone ? "ended" : "live"} · y yank · esc back`}
+        status={copiedNotice ? <CopiedNotice /> : undefined}
       >
         <scrollbox focused flexGrow={1} stickyScroll>
           <text>

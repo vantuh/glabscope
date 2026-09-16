@@ -7,13 +7,14 @@ See `proposal.md` for motivation. Logs still come from `glab ci trace <job-id>` 
 **Goals:**
 - On `screen === "logs"`, copy a finished nonempty mouse selection of the trace body.
 - On that screen, `y` copies `logBuffer` when it is nonempty.
+- After a copy that wrote text, drop the selection and show a short-lived `copied to clipboard` notice in the footer.
 - Keep mouse tracking so wheel still scrolls the framed log.
 
 **Non-Goals:**
 - No new GitLab command, REST client, or trace poller — still `glab ci trace <job-id>`.
 - No `useMouse: false`.
 - No copy handlers on list/graph/attempts.
-- No visual toast beyond footer `y`.
+- No floating toast window: the notice reuses the log panel's existing footer status slot.
 
 ## Decisions
 
@@ -33,7 +34,14 @@ Do not shell out to `pbcopy` unless the OpenTUI write fails in a follow-up; that
 `y` copies the retained visible buffer (capped at 200_000 characters), not only the on-screen rows. Waiting placeholder is not retained in `logBuffer`; empty buffer → no-op.
 
 ### 4. Footer
-Log footer becomes `live|ended · y yank · esc back` (wording can be shorter as long as `y` is visible).
+Log footer becomes `live|ended · y yank · esc back` (wording can be shorter as long as `y` is visible). The `copied to clipboard` notice paints into the footer's existing `status` slot, so no new chrome row is added.
+
+### 5. Feedback: optimistic notice plus a dropped selection
+`copyPlainText` reports whether it wrote anything. When it did, the log screen (a) clears the renderer selection so the body repaints unselected and (b) shows `copied to clipboard` in the footer status slot for ~1.5 s via a timer, which also clears on unmount.
+
+The notice is optimistic: OpenTUI's write is fire-and-forget and the TUI cannot read the clipboard back, so the feedback means "a copy was issued", not "the terminal accepted it". The selection clear rides on the same signal, so a drag that copied nothing leaves the body untouched.
+
+Alternative: announce only after `writeText` confirms (host `written` / OSC 52 `attempted`). Rejected — it makes `copyPlainText` async, delays feedback behind the host timeout, and tells the operator nothing more inside Herdr panes, where the host path is not attempted at all.
 
 ## Risks / Trade-offs
 
@@ -42,6 +50,8 @@ Log footer becomes `live|ended · y yank · esc back` (wording can be shorter as
 - [OSC 52 ignored inside Herdr] → prefer host clipboard write; verify manually in a Herdr pane.
 - [Live append during a drag] → copy whatever the selection object reports at finish; do not freeze the buffer for mouse copy.
 - [Tests cannot see the real clipboard] → stub `copyPlainText` and assert it was called with `logBuffer` / selected text.
+- [Optimistic feedback can lie] → the notice may appear when the terminal drops the write; accepted because the clipboard cannot be read back, and silence would be worse feedback. Revisit if a `pbcopy` fallback lands.
+- [Notice timer outliving the screen] → the notice renders only on the log screen and the timer is cleared on unmount, so leaving the log cannot resurrect it.
 
 ## Migration Plan
 
