@@ -115,6 +115,19 @@ function CopiedNotice() {
   );
 }
 
+/**
+ * A body notice line. Two bare `<text>` siblings in one column paint into the
+ * same row, so the later one lands on top of the earlier and can hide it; each
+ * notice claims its own fixed-height line instead.
+ */
+function NoticeLine({ children }: { children: ReactNode }) {
+  return (
+    <box height={1} flexShrink={0}>
+      <text fg="#eab308">{children}</text>
+    </box>
+  );
+}
+
 function retryFailureMessage(error: unknown): string {
   return `retry failed: ${error instanceof Error ? error.message : String(error)}`;
 }
@@ -767,7 +780,7 @@ export function App() {
           ) : undefined
         }
       >
-        {model.retryMessage ? <text fg="#eab308">{model.retryMessage}</text> : null}
+        {model.retryMessage ? <NoticeLine>{model.retryMessage}</NoticeLine> : null}
         <scrollbox focused flexGrow={1} stickyScroll>
           <text>
             {model.logTrace.runs.length === 0
@@ -811,9 +824,9 @@ export function App() {
               : undefined
         }
       >
-        {model.retryMessage ? <text fg="#eab308">{model.retryMessage}</text> : null}
+        {model.retryMessage ? <NoticeLine>{model.retryMessage}</NoticeLine> : null}
         {model.refreshWarning ? (
-          <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
+          <NoticeLine>refresh error: {model.refreshWarning} — retrying</NoticeLine>
         ) : null}
         <scrollbox focused flexGrow={1}>
           {attempts.map((job, index) => (
@@ -846,11 +859,13 @@ export function App() {
               : undefined
         }
       >
-        {model.retryMessage ? <text fg="#eab308">{model.retryMessage}</text> : null}
+        {model.retryMessage ? <NoticeLine>{model.retryMessage}</NoticeLine> : null}
         {model.refreshWarning ? (
-          <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
+          <NoticeLine>refresh error: {model.refreshWarning} — retrying</NoticeLine>
         ) : null}
-        {model.graph?.truncated ? <text fg="#eab308">job list truncated at 100</text> : null}
+        {model.graph?.truncated ? (
+          <NoticeLine>job list truncated at 100</NoticeLine>
+        ) : null}
         <scrollbox ref={graphScrollRef} flexGrow={1}>
           {stageGraph ? (
             <GraphBody
@@ -882,7 +897,7 @@ export function App() {
       }
     >
       {model.refreshWarning ? (
-        <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
+        <NoticeLine>refresh error: {model.refreshWarning} — retrying</NoticeLine>
       ) : null}
       {model.pipelines.length > 0 ? (
         <box height={1} flexShrink={0}>

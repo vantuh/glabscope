@@ -2545,3 +2545,30 @@ test("a long ref name is ellipsized in place and keeps the started column", asyn
     setup.renderer.destroy();
   }
 });
+
+test("a retry notice and a refresh warning keep their own rows on the graph", async () => {
+  capturePollTimers();
+  graphGate.resolve(graphFor("RUNNING", [jobIn("build", "99", "running")]));
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    graphScript = [new Error("graphql failed"), new Error("graphql failed")];
+    setup.mockInput.pressKey("r", { ctrl: true });
+    const frame = await waitForFrame(
+      setup,
+      (f) =>
+        f.includes("only failed or canceled jobs can be retried") &&
+        f.includes("refresh error: graphql failed — retrying"),
+      "both notice rows",
+    );
+    const lines = frame.split("\n");
+    expect(lines.some((line) => line.includes("only failed or canceled jobs can be retried"))).toBe(
+      true,
+    );
+    expect(lines.some((line) => line.includes("refresh error: graphql failed — retrying"))).toBe(
+      true,
+    );
+  } finally {
+    setup.renderer.destroy();
+  }
+});
