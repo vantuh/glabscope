@@ -156,22 +156,43 @@ export function parsePipelineGraph(payload: GqlResponse): PipelineGraph {
   };
 }
 
-const projectPathCache = new Map<string, string>();
+export type ProjectInfo = {
+  /** The `group/project` path the graph query addresses the project by. */
+  fullPath: string;
+  /** The project's web URL from the same payload; null when glab omits it. */
+  webUrl: string | null;
+};
 
-export async function projectFullPath(cwd = process.cwd()): Promise<string> {
-  const cached = projectPathCache.get(cwd);
+const projectCache = new Map<string, ProjectInfo>();
+
+/**
+ * The project glab resolves for `cwd`, cached per working tree. The same
+ * `glab repo view -F json` payload carries both the full path the graph query
+ * needs and the web URL the open key needs, so neither adds a subprocess: only
+ * `path_with_namespace` is required, exactly as before, and a payload without
+ * `web_url` still yields a usable full path with no web address.
+ */
+export async function projectInfo(cwd = process.cwd()): Promise<ProjectInfo> {
+  const cached = projectCache.get(cwd);
   if (cached) {
     return cached;
   }
-  const raw = parseJsonStdout<{ path_with_namespace?: string; path?: string }>(
-    await runGlab(["repo", "view", "-F", "json"], { cwd }),
-  );
-  const path = raw.path_with_namespace ?? raw.path;
-  if (!path) {
+  const raw = parseJsonStdout<{
+    path_with_namespace?: string;
+    path?: string;
+    web_url?: string;
+  }>(await runGlab(["repo", "view", "-F", "json"], { cwd }));
+  const fullPath = raw.path_with_namespace ?? raw.path;
+  if (!fullPath) {
     throw new Error("glab repo view did not include path_with_namespace");
   }
-  projectPathCache.set(cwd, path);
-  return path;
+  const info: ProjectInfo = { fullPath, webUrl: raw.web_url || null };
+  projectCache.set(cwd, info);
+  return info;
+}
+
+export async function projectFullPath(cwd = process.cwd()): Promise<string> {
+  return (await projectInfo(cwd)).fullPath;
 }
 
 export async function fetchPipelineGraph(

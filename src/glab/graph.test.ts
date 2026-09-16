@@ -2,7 +2,7 @@ import { expect, mock, spyOn, test } from "bun:test";
 import fixture from "../fixtures/pipeline-jobs-needs.json";
 import retriedFixture from "../fixtures/pipeline-jobs-retried.json";
 import missing from "../fixtures/needs-missing.json";
-import { fetchPipelineGraph, latestJobs, NeedsUnavailableError, parsePipelineGraph } from "./graph.ts";
+import { fetchPipelineGraph, latestJobs, NeedsUnavailableError, parsePipelineGraph, projectFullPath, projectInfo } from "./graph.ts";
 import { RateLimitedError } from "./ratelimit.ts";
 import * as runModule from "./run.ts";
 
@@ -121,6 +121,66 @@ test("a retried-away attempt collapses to one node per job with its needs intact
   expect(tests?.status).toBe("SUCCESS");
   expect(tests?.needsNames).toEqual(["build"]);
   expect(visible.find((job) => job.name === "deploy")?.needsNames).toEqual(["tests"]);
+});
+
+test("one glab repo view is shared by every read of the same directory", async () => {
+  let calls = 0;
+  const runSpy = spyOn(runModule, "runGlab").mockImplementation(async () => {
+    calls += 1;
+    return {
+      stdout: JSON.stringify({
+        path_with_namespace: "group/project",
+        web_url: "https://gitlab.example.com/group/project",
+      }),
+      stderr: "",
+      code: 0,
+    };
+  });
+  try {
+    const cwd = "/tmp/glabscope-project-cache";
+    const first = await projectInfo(cwd);
+    expect(first).toEqual({
+      fullPath: "group/project",
+      webUrl: "https://gitlab.example.com/group/project",
+    });
+    expect(await projectInfo(cwd)).toEqual(first);
+    expect(calls).toBe(1);
+    // The graph path keeps reading the full path through the same cache.
+    expect(await projectFullPath(cwd)).toBe("group/project");
+    expect(calls).toBe(1);
+  } finally {
+    runSpy.mockRestore();
+  }
+});
+
+test("a payload without web_url still yields the full path and no web address", async () => {
+  const runSpy = spyOn(runModule, "runGlab").mockResolvedValue({
+    stdout: JSON.stringify({ path_with_namespace: "group/project" }),
+    stderr: "",
+    code: 0,
+  });
+  try {
+    const info = await projectInfo("/tmp/glabscope-no-web-url");
+    expect(info.fullPath).toBe("group/project");
+    expect(info.webUrl).toBeNull();
+  } finally {
+    runSpy.mockRestore();
+  }
+});
+
+test("path_with_namespace is still required", async () => {
+  const runSpy = spyOn(runModule, "runGlab").mockResolvedValue({
+    stdout: JSON.stringify({ web_url: "https://gitlab.example.com/group/project" }),
+    stderr: "",
+    code: 0,
+  });
+  try {
+    await expect(projectInfo("/tmp/glabscope-missing-path")).rejects.toThrow(
+      "path_with_namespace",
+    );
+  } finally {
+    runSpy.mockRestore();
+  }
 });
 
 test("a rate-limited graphql call is classified as a rate-limit error", async () => {
