@@ -312,6 +312,7 @@ function ConfirmPrompt({ question }: { question: string }) {
         border
         borderStyle="rounded"
         borderColor={CHROME_COLOR}
+        backgroundColor="#111827"
         flexDirection="column"
         paddingLeft={1}
         paddingRight={1}
@@ -344,8 +345,8 @@ export function App() {
   const graphWatchRef = useRef<{ isSlow: () => boolean; wake: () => void } | null>(null);
   /**
    * A prompt this frame's keys asked for, before the reducer's answer has
-   * rendered. Without it, two keys in one frame both read a model with no
-   * prompt and the second one acts on the screen behind it.
+   * rendered. Without it, keys in one frame all read the same model and act on
+   * a state the reducer has already changed.
    */
   const promptAskedRef = useRef(false);
   // Cleared by every render, so the latch only ever covers the frame that set
@@ -676,11 +677,11 @@ export function App() {
 
   /**
    * Ask the reducer for a job action's prompt. The synchronous latch keeps this
-   * frame's remaining keys out, and the preconditions mirror the reducer's so a
-   * request that opens nothing cannot leave the latch set.
+   * frame's remaining keys out, and the preconditions mirror the reducer's, so
+   * a request that opens nothing cannot leave the latch set and swallow a key.
    */
   const askJobAction = (job: JobNode) => {
-    if (model.retry || model.confirm || model.manualRefresh) {
+    if (model.retry || model.confirm) {
       return;
     }
     if (jobActionKind(job, model.screen)) {

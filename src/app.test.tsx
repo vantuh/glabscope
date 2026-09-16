@@ -2988,7 +2988,7 @@ test("cancelling the attempts prompt keeps the same row focused", async () => {
   }
 });
 
-test("no prompt opens while the graph is mid-refresh behind its overlay", async () => {
+test("the prompt is legible over the graph's refresh overlay", async () => {
   graphGate.resolve(failedGraph());
   const setup = await testRender(<App />, { width: 100, height: 20 });
   try {
@@ -3000,21 +3000,29 @@ test("no prompt opens while the graph is mid-refresh behind its overlay", async 
     await waitForFrame(setup, (f) => f.includes("Refreshing…"), "manual refresh overlay");
 
     setup.mockInput.pressKey("r", { ctrl: true });
-    await Bun.sleep(20);
-    await setup.renderOnce();
-    // The prompt and the overlay must never draw over each other.
-    const frame = setup.captureCharFrame();
-    expect(frame).not.toContain("enter confirm");
-    expect(frame).not.toContain("retry job build?");
+    const asked = await waitForFrame(
+      setup,
+      (f) => f.includes("enter confirm"),
+      "prompt over the refresh overlay",
+    );
+    // The prompt's own text survives whole: the overlay underneath must not
+    // composite into it.
+    expect(asked).toContain("retry job build?");
+    expect(asked).toContain("enter confirm  esc cancel");
+    expect(asked.split("\n").filter((line) => line.includes("retry job build?"))).toHaveLength(1);
     expect(retryCalls).toEqual([]);
 
-    // Once the refresh settles, the key asks normally.
-    graphScript = [failedGraph()];
+    // Cancelling reveals the overlay that was behind the prompt all along.
+    setup.mockInput.pressEscape();
+    await waitForFrame(
+      setup,
+      (f) => !f.includes("enter confirm") && f.includes("Refreshing…"),
+      "overlay after cancelling",
+    );
+    expect(retryCalls).toEqual([]);
+
     held.resolve(failedGraph());
     await waitForFrame(setup, (f) => !f.includes("Refreshing…"), "refresh settled");
-    setup.mockInput.pressKey("r", { ctrl: true });
-    const asked = await waitForFrame(setup, (f) => f.includes("enter confirm"), "prompt after refresh");
-    expect(asked).toContain("retry job build?");
   } finally {
     setup.renderer.destroy();
   }
@@ -3157,3 +3165,39 @@ test("a key pressed in the request's own frame does not open the log or start an
     setup.renderer.destroy();
   }
 });
+
+test("a refresh asked for in the same frame leaves the request answerable", async () => {
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    const callsBefore = fetchGraphCalls.length;
+
+    // The refresh goes first, then the request, both in one frame; the refresh
+    // answer is held so its overlay stays up.
+    const held = Promise.withResolvers<PipelineGraph>();
+    graphGate = held;
+    setup.mockInput.pressKey("r");
+    setup.mockInput.pressKey("r", { ctrl: true });
+    const asked = await waitForFrame(
+      setup,
+      (f) => f.includes("enter confirm"),
+      "prompt asked for after a refresh",
+    );
+    expect(asked).toContain("retry job build?");
+    expect(retryCalls).toEqual([]);
+    expect(fetchGraphCalls.length).toBeGreaterThan(callsBefore);
+
+    // The request is still answerable: confirming starts exactly one action.
+    setup.mockInput.pressEnter();
+    await waitFor(() => retryCalls.length === 1, "confirmed retry");
+    expect(retryCalls).toEqual(["99"]);
+
+    held.resolve(failedGraph());
+    await setup.renderOnce();
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+

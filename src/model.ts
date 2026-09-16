@@ -396,10 +396,9 @@ export function reduce(model: AppModel, action: Action): AppModel {
     case "manualRefresh":
       return { ...model, manualRefresh: action.target };
     case "requestJobAction": {
-      // One job action at a time, one prompt at a time, and never while the
-      // screen is mid-refresh under a loading overlay: the prompt and the
-      // overlay would draw over each other.
-      if (model.retry || model.confirm || model.manualRefresh) {
+      // One job action at a time, and one prompt at a time. A refresh in flight
+      // does not block the prompt: it is drawn opaquely above that overlay.
+      if (model.retry || model.confirm) {
         return model;
       }
       const kind = jobActionKind(action.job, model.screen);
@@ -529,6 +528,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
           logDone: model.logDone,
           manualRefresh: null,
           retryMessage: null,
+          confirm: null,
         };
       }
       if (model.screen === "attempts") {
@@ -537,6 +537,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
           screen: "graph",
           manualRefresh: null,
           retryMessage: null,
+          confirm: null,
         };
       }
       if (model.screen === "graph") {
@@ -546,6 +547,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
           refreshWarning: null,
           manualRefresh: null,
           retryMessage: null,
+          confirm: null,
         };
       }
       return model;

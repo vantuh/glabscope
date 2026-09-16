@@ -520,18 +520,19 @@ test("a request while one is in flight or already asked changes nothing", () => 
   expect(reduce(inFlight, { type: "confirmJobAction" })).toEqual(inFlight);
 });
 
-test("a request while a manual refresh is showing opens no prompt", () => {
+test("a refresh in flight does not block the prompt", () => {
   let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
   model = reduce(model, { type: "manualRefresh", target: "graph" });
   const asked = reduce(model, { type: "requestJobAction", job: retryableJob("lint", "10") });
-  expect(asked).toEqual(model);
-  expect(asked.confirm).toBeNull();
+  expect(asked.confirm).toEqual({ kind: "retry", jobId: "10", name: "lint" });
+  expect(asked.manualRefresh).toBe("graph");
 
-  // Once the refresh settles, the same key asks again.
-  const settled = reduce(asked, { type: "refreshGraph", graph: graphWithFailedJob() });
-  expect(reduce(settled, { type: "requestJobAction", job: retryableJob("lint", "10") }).confirm).toEqual(
-    { kind: "retry", jobId: "10", name: "lint" },
-  );
+  // Leaving the screen takes the prompt with it, so it can never linger
+  // invisibly on a screen that does not draw it.
+  for (const screen of ["graph", "attempts", "logs"] as const) {
+    const onScreen = reduce(asked, { type: "focusJob", id: "gid://gitlab/Ci::Build/10" });
+    expect(reduce({ ...onScreen, screen }, { type: "back" }).confirm).toBeNull();
+  }
 });
 
 test("confirming refuses a job that left the pipeline while the prompt was open", () => {
