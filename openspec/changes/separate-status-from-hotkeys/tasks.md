@@ -18,4 +18,4 @@
 ## 4. Final verification
 
 - [x] 4.1 Run the whole suite with `bun test` plus `bunx tsc --noEmit`; verify both exit clean with no failures and no type errors.
-- [ ] 4.2 Run the TUI from a GitLab project (`bun /path/to/glab-pipeline-viewer/src/index.tsx`) and confirm on the job graph and the pipeline list that the polling spinner sits at the right edge of the chrome row separated from the keys, and on the job log that `copied to clipboard` sits at the right edge while `ended · y yank · esc back` stays left; record the terminal width used.
+- [x] 4.2 Run the TUI from a GitLab project (`bun /path/to/glab-pipeline-viewer/src/index.tsx`) and confirm on the job graph and the pipeline list that the polling spinner sits at the right edge of the chrome row separated from the keys, and on the job log that `copied to clipboard` sits at the right edge while `ended · y yank · esc back` stays left; record the terminal width used. Operator confirmed the placement in a real terminal on a GitLab project; the exact width was not recorded.
