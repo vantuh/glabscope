@@ -10,12 +10,13 @@ The retry action already provides everything a second job action needs, and this
 - `src/app.tsx`'s `ScreenPanel` already hosts an absolutely positioned overlay inside the framed content box for the log-loading spinner (`LoadingOverlay`), which is the shape a confirmation prompt can reuse.
 - `src/glab/query.ts` + `src/glab/graph.ts`: the pipeline graph payload (`status`, `kind`, `retried`, `needs`).
 
-Facts established before writing this, against glab 1.117.0 and the operator's instance (`gitlab.foodtech.team`):
+How the play facts were established, and how strongly:
 
-- `glab ci trigger <job-id>` is the only official route to a manual job. With a numeric argument no `-p` / `-b` is required (`ciutils.GetJobId` returns an integer id directly), and the command prints `Triggered job (ID: %d), status: %s, ref: %s, weburl: %s`. The format string is in the installed binary, beside retry's `Retried job (ID: %d), …` and `Could not trigger job with ID: %d`.
+- **Read from the installed glab 1.117.0 binary** (not run): `glab ci trigger <job-id>` is the CLI's route to a manual job and prints `Triggered job (ID: %d), status: %s, ref: %s, weburl: %s`, beside retry's `Retried job (ID: %d), …` and `Could not trigger job with ID: %d`.
+- **Read from upstream sources**: `ciutils.GetJobId` (used by `ci trigger`) returns a numeric argument as the job id directly, so no `-p` / `-b` is needed; `Ci::PlayBuildService` → `Ci::EnqueueJobService` → `job.enqueue!` enqueues the same build, so a run normally keeps the job id and the card moves `manual` → `pending`, with a new attempt only on GitLab's internal invalid-transition fallback; `Ci::Build#playable?` is `action? && !archived? && (manual? || scheduled? || retryable?)`, which is also true for successful manual jobs and for retryable jobs.
+- **Verified against the operator's instance** (`gitlab.foodtech.team`), read-only: a GraphQL schema introspection showed `CiJob` carries `playable`, `canPlayJob`, `retryable`, and `manualJob`, so the instance is new enough for any of them; the status gate still needs none of them.
+- **Not verified against a live GitLab**: the running `glab ci trigger` command, its real stdout, and the same-id enqueue. The operator declined the live spike (task 1.1) because the only waiting manual jobs reachable in their projects are `deploy_*` jobs, so `src/glab/play.ts` and its fixture rest on the binary format string and the upstream source above, exactly as the existing retry fixture does.
 - Node names in the graph are already the GitLab job id, so the focused card's `numericId` is the argument.
-- GitLab's play service enqueues the job in place (`Ci::PlayBuildService` → `Ci::EnqueueJobService` → `job.enqueue!`), so a run normally keeps the job id and the card moves `manual` → `pending`. Only GitLab's internal invalid-transition fallback produces a new attempt with a new id.
-- GitLab's own `playable` condition is `action? && !archived? && (manual? || scheduled? || retryable?)`, which is also true for successful manual jobs and for retryable jobs, and the GraphQL `playable` / `canPlayJob` fields are not needed for the status gate chosen below (`canPlayJob` additionally calls Gitaly).
 
 ## Goals / Non-Goals
 
@@ -80,19 +81,35 @@ The model gains a `confirm` slot holding `{ kind, jobId, name }` (the screen can
 
 - `requestJobAction(job)` — refuse with the usual notice when the gate says no action applies, otherwise open the prompt. The gate is evaluated here, so a job the key cannot act on never shows a prompt.
 - `cancelJobAction` — clear the prompt. Nothing else changes: no message, no focus move, no trace restart, no state on the screen behind it.
-- `confirmJobAction` — resolve the prompt through `pendingJobAction`, then either record the in-flight action with its kind or replace the prompt with the reason it cannot be honoured. The reducer owns both state and message; the key handler only asks `pendingJobAction` whether to spawn a process, so the two can never disagree about the gate.
+- `confirmJobAction` — resolve the prompt through `pendingJobAction`, then either record the in-flight action with its kind or replace the prompt with the reason it cannot be honoured. The reducer owns both state and message.
 
-This replaced an earlier plan to keep `startRetry` as the confirmed step: with the prompt owning the gate, the confirmed step had to decide refusals too, and a payload-free action keeps the message in the reducer. `retryFailed` and the log-screen fallback also clear the prompt so a refusal can never leave a stale dialog on screen.
+**The process is started by the committed state, not by the key handler.** An effect watches `model.retry` and spawns `retryJob` / `playJob` once per distinct action, keyed by kind, job id and screen, so:
+
+- a refresh that commits between the key press and the confirmation is seen by the reducer, which refuses, and nothing is ever spawned from a stale snapshot;
+- two Return events in the same frame cannot spawn two commands, because the second one only meets a cleared prompt and the reducer returns the same state;
+- the handler is three lines (confirm, cancel, swallow) and the app needs no in-flight mirror ref, so the reducer is the only gate.
+
+This replaced an earlier plan to keep `startRetry` as the confirmed step spawned from the handler. `retryFailed` and the log-screen fallback also clear the prompt so a refusal can never leave a stale dialog on screen.
 
 The prompt state lives in the model rather than in component state so that "one action at a time" (`retry` or `confirm`, never both), the gate re-check and the messages are all testable through `reduce`, exactly like the in-flight slot today.
 
 **9. Confirming re-checks the action against the current pipeline.**
 
-`pendingJobAction(model)` returns the job the open prompt would act on, looked up by job id in the current graph and re-gated with `jobActionKind`. The reducer's confirm step resolves the prompt through that same helper, and the key handler calls it to decide whether to spawn a process at all, so the re-check exists once. A job that disappeared or no longer qualifies produces a non-fatal notice instead of a command: the action's own refusal message while the job is still in the graph, or `that job is no longer in this pipeline` when a refresh dropped it. The graph keeps polling while the prompt is open, so a manual job another operator already started must not be played again, and GitLab answers a play on an enqueued job with its invalid-transition fallback, which would create a second attempt.
+`pendingJobAction(model)` returns the job the open prompt would act on, looked up by job id in the current graph and re-gated with `jobActionKind`. The reducer's confirm step resolves the prompt through that same helper, and the key handler calls it to decide whether to spawn a process at all, so the re-check exists once. The re-check also requires the job's action to still be **the action the operator confirmed**: `jobActionKind` must return the prompt's own kind, so a failed job that turned manual cannot answer a confirmed "retry" with a play, and a manual job that turned canceled cannot answer a confirmed "run" with a retry.
+
+A job that disappeared, changed action, or no longer qualifies produces a non-fatal notice instead of a command: `that job is no longer in this pipeline`, `that job's status changed while the prompt was open`, or the action's own refusal message. The graph keeps polling while the prompt is open, so a manual job another operator already started must not be played again, and GitLab answers a play on an enqueued job with its invalid-transition fallback, which would create a second attempt.
+
+**11. A refresh from outside the graph loop can pull the pending wait back to the normal interval.**
+
+The graph loop keeps its cadence in closure state and only recomputes it in its own `tick()`, so a run on a terminal pipeline would otherwise leave the already-scheduled watch-interval timer running: the post-action refresh reports a running pipeline, and the operator then waits out up to the whole watch interval before normal polling resumes.
+
+The loop publishes `{ isSlow, wake }` through a ref, and an effect on the committed pipeline status calls `wake()` when the pipeline just became active while the pending delay is slower than normal. `wake()` reschedules the pending timer at `NORMAL_POLL_MS` instead of fetching immediately, which keeps the property the retry change established — exactly one graph fetch per job action — and leaves rate-limit backoff untouched, because a wake only fires on a transition into an active pipeline.
 
 **10. The prompt is an overlay inside the existing content box, and it owns the keyboard while it is open.**
 
 A `ConfirmPrompt` renders like `LoadingOverlay` — absolutely positioned inside `ScreenPanel`'s content box, above the screen's own content — but with two lines: the question (`retry job <name>?`, `run job <name>?`) and its keys (`enter confirm  esc cancel`). The question uses the help gray and the keys the frame gray, so the prompt reads as chrome; the success, failed and running-or-pending colors stay reserved for job state. (In this codebase the help gray is the same hex as the `other` bucket, which is why the requirement names the three state-carrying colors instead of all four buckets.) `ScreenPanel` gains an optional prompt node next to its existing `loadingLabel`, and the graph, attempts and log panels pass it from `model.confirm`.
+
+The prompt outranks the log-loading overlay in z-order, and the request is refused outright while a manual refresh is showing. Without that, the two overlays paint into the same centred cells — the confirmed question and the spinner composite into one unreadable line — so the prompt is simply not offered while the screen is mid-refresh.
 
 The prompt is not transient status, so it stays out of the chrome status area and the key-help line keeps listing the screen's own keys, which is what the screen-chrome requirement already demands.
 

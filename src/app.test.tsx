@@ -2620,9 +2620,11 @@ test("the confirmation prompt asks before a retry and names the job", async () =
     expect(frame).toContain("retry job build?");
     // The screen behind the prompt is still the graph, card and all.
     expect(frame).toContain("pipeline 5");
+    // The card behind the prompt is still drawn, not just named in its question.
+    expect(focusedCard(frame, statusIcon("failed"), "build")).toBe(true);
     expect(retryCalls).toEqual([]);
 
-    // Chrome colors only: the prompt never borrows a status-bucket color.
+    // Chrome colors only: the prompt never borrows a state-carrying color.
     const question = rowSpans(setup, "retry job build?")[0];
     const keys = rowSpans(setup, "enter confirm")[0];
     const stateColors = [BUCKET_COLOR.success, BUCKET_COLOR.failed, BUCKET_COLOR["running-or-pending"]].map(
@@ -2873,6 +2875,147 @@ test("quit still quits while a prompt is open", async () => {
     expect(retryCalls).toEqual([]);
   } finally {
     process.exit = originalExit;
+    setup.renderer.destroy();
+  }
+});
+
+test("two confirming keys in the same frame start one action", async () => {
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    retryGate = Promise.withResolvers();
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitForFrame(setup, (f) => f.includes("enter confirm"), "confirmation prompt");
+    // Both keys arrive before React redraws, so the second sees the same prompt.
+    setup.mockInput.pressEnter();
+    setup.mockInput.pressEnter();
+    await waitFor(() => retryCalls.length === 1, "one retry call");
+    await Bun.sleep(20);
+    await setup.renderOnce();
+    expect(retryCalls).toEqual(["99"]);
+  } finally {
+    retryGate?.resolve({ jobId: null });
+    setup.renderer.destroy();
+  }
+});
+
+test("a refresh that lands under the prompt keeps the confirmed action honest", async () => {
+  capturePollTimers();
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitForFrame(setup, (f) => f.includes("enter confirm"), "confirmation prompt");
+
+    // The watch poll answers with a job that no longer failed, while the prompt
+    // is still open. Confirming must not start anything from the stale card.
+    graphScript = [graphFor("SUCCESS", [{ ...jobIn("build", "99", "success"), stage: "test" }])];
+    await waitForFrame(
+      setup,
+      (f) => f.includes("enter confirm") && f.includes(statusIcon("success")),
+      "refreshed card behind the prompt",
+    );
+
+    setup.mockInput.pressEnter();
+    await Bun.sleep(20);
+    await setup.renderOnce();
+    expect(retryCalls).toEqual([]);
+    const frame = setup.captureCharFrame();
+    expect(frame).not.toContain("enter confirm");
+    expect(frame).toContain(
+      "only failed or canceled jobs can be retried, and only waiting manual jobs can be run",
+    );
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a run on a terminal pipeline pulls the pending watch interval back to normal", async () => {
+  const { scheduled } = capturePollTimers();
+  graphGate.resolve(manualGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    await waitFor(() => pollDelays(scheduled).includes(IDLE_POLL_MS), "watch interval scheduled");
+
+    playGate = Promise.withResolvers();
+    await askAndConfirm(setup);
+    await waitFor(() => playCalls.length === 1, "run call");
+    graphScript = [graphFor("RUNNING", [{ ...jobIn("deploy", "99", "running"), stage: "deploy" }])];
+    playGate.resolve({ jobId: "99" });
+
+    // The post-run refresh reports a running pipeline; the wait the loop had
+    // already scheduled must not outlive that.
+    await waitFor(
+      () =>
+        pollDelays(scheduled).some(
+          (delay, index) =>
+            delay === IDLE_POLL_MS && pollDelays(scheduled)[index + 1] === NORMAL_POLL_MS,
+        ),
+      "normal interval after the run",
+    );
+    const frame = await waitForFrame(
+      setup,
+      (f) => focusedCard(f, statusIcon("running"), "deploy"),
+      "the same card now running",
+    );
+    expect(frame).not.toContain("enter confirm");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("cancelling the attempts prompt keeps the same row focused", async () => {
+  graphGate.resolve(retriedAttemptsGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openAttempts(setup);
+    expect(focusedAttemptRow(setup.captureCharFrame(), "12")).toBe(true);
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitForFrame(setup, (f) => f.includes("enter confirm"), "attempts prompt");
+    setup.mockInput.pressEscape();
+    const frame = await waitForFrame(
+      setup,
+      (f) => !f.includes("enter confirm") && f.includes("attempts lint"),
+      "attempts list without the prompt",
+    );
+    expect(focusedAttemptRow(frame, "12")).toBe(true);
+    expect(retryCalls).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("no prompt opens while the graph is mid-refresh behind its overlay", async () => {
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    // A manual refresh whose answer never comes holds its overlay open.
+    const held = Promise.withResolvers<PipelineGraph>();
+    graphGate = held;
+    setup.mockInput.pressKey("r");
+    await waitForFrame(setup, (f) => f.includes("Refreshing…"), "manual refresh overlay");
+
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await Bun.sleep(20);
+    await setup.renderOnce();
+    // The prompt and the overlay must never draw over each other.
+    const frame = setup.captureCharFrame();
+    expect(frame).not.toContain("enter confirm");
+    expect(frame).not.toContain("retry job build?");
+    expect(retryCalls).toEqual([]);
+
+    // Once the refresh settles, the key asks normally.
+    graphScript = [failedGraph()];
+    held.resolve(failedGraph());
+    await waitForFrame(setup, (f) => !f.includes("Refreshing…"), "refresh settled");
+    setup.mockInput.pressKey("r", { ctrl: true });
+    const asked = await waitForFrame(setup, (f) => f.includes("enter confirm"), "prompt after refresh");
+    expect(asked).toContain("retry job build?");
+  } finally {
     setup.renderer.destroy();
   }
 });

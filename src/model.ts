@@ -181,6 +181,7 @@ function attemptFocusIndex(graph: PipelineGraph, card: JobNode | undefined, id: 
 
 const NEW_ATTEMPT_UNFOLLOWED = "retried, but the new attempt could not be followed";
 const JOB_GONE_MESSAGE = "that job is no longer in this pipeline";
+const JOB_CHANGED_MESSAGE = "that job's status changed while the prompt was open";
 
 /**
  * Which job actions each screen offers. Retry is checked first, so a job that
@@ -218,8 +219,9 @@ function graphJobById(model: AppModel, id: string): JobNode | undefined {
 
 /**
  * The job the open confirmation would act on, re-checked against the current
- * graph: a job that left the pipeline, or whose status changed while the prompt
- * was open, must not be started.
+ * graph: a job that left the pipeline, a job whose status now calls for the
+ * other action, and a job the confirmed action no longer applies to must all
+ * stay unstarted.
  */
 export function pendingJobAction(
   model: AppModel,
@@ -233,13 +235,21 @@ export function pendingJobAction(
     return null;
   }
   const kind = jobActionKind(job, model.screen);
-  return kind ? { job, kind } : null;
+  return kind === pending.kind ? { job, kind } : null;
 }
 
 /** Why the open prompt can no longer be honoured. */
 function confirmRefusalMessage(model: AppModel): string {
-  const job = model.confirm ? graphJobById(model, model.confirm.jobId) : undefined;
-  return job ? jobActionRefusalMessage(job, model.screen) : JOB_GONE_MESSAGE;
+  const pending = model.confirm;
+  const job = pending ? graphJobById(model, pending.jobId) : undefined;
+  if (!job) {
+    return JOB_GONE_MESSAGE;
+  }
+  const kind = jobActionKind(job, model.screen);
+  if (kind && kind !== pending?.kind) {
+    return JOB_CHANGED_MESSAGE;
+  }
+  return jobActionRefusalMessage(job, model.screen);
 }
 
 function jobActionRefusalMessage(job: Pick<JobNode, "isBridge">, screen: Screen): string {
@@ -386,8 +396,10 @@ export function reduce(model: AppModel, action: Action): AppModel {
     case "manualRefresh":
       return { ...model, manualRefresh: action.target };
     case "requestJobAction": {
-      // One job action at a time, and one prompt at a time.
-      if (model.retry || model.confirm) {
+      // One job action at a time, one prompt at a time, and never while the
+      // screen is mid-refresh under a loading overlay: the prompt and the
+      // overlay would draw over each other.
+      if (model.retry || model.confirm || model.manualRefresh) {
         return model;
       }
       const kind = jobActionKind(action.job, model.screen);

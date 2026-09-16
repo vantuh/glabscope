@@ -16,8 +16,11 @@ const SGR = /\u001b\[[0-9;]*m/g;
 
 export type PlayResult = {
   /**
-   * The played job's id, or null when stdout did not name one. GitLab enqueues
-   * the job in place, so this normally matches the id that was passed.
+   * The played job's id, or null when stdout did not name one. Upstream,
+   * `PlayBuildService` enqueues the same build, so this normally matches the id
+   * that was passed; GitLab's own invalid-transition fallback is the one path
+   * that answers with a new attempt instead. Not verified against a live
+   * GitLab: see the change's design notes.
    */
   jobId: string | null;
 };

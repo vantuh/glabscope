@@ -292,7 +292,8 @@ function LoadingOverlay({ label }: { label: string }) {
 /**
  * A job action is confirmed before anything reaches GitLab. The prompt sits in
  * the framed content area, over the screen that asked, in chrome colors only so
- * the status-bucket colors keep their meaning.
+ * the status-bucket colors keep their meaning, and above the log-loading
+ * overlay so it can never be covered while it owns the keyboard.
  */
 function ConfirmPrompt({ question }: { question: string }) {
   return (
@@ -302,7 +303,7 @@ function ConfirmPrompt({ question }: { question: string }) {
       left={0}
       width="100%"
       height="100%"
-      zIndex={100}
+      zIndex={200}
       backgroundColor="#111827cc"
       alignItems="center"
       justifyContent="center"
@@ -335,8 +336,12 @@ export function App() {
   const graphScrollRef = useRef<ScrollBoxRenderable>(null);
   const navigatingRef = useRef(model.navigating);
   navigatingRef.current = model.navigating;
-  const retryRef = useRef(model.retry);
-  retryRef.current = model.retry;
+  /**
+   * The graph loop's pending timer, so a refresh from outside the loop (a run
+   * or a retry) can pull a slowed watch interval back to the normal one
+   * without restarting the loop or fetching a second time.
+   */
+  const graphWatchRef = useRef<{ isSlow: () => boolean; wake: () => void } | null>(null);
   const focusedId = focusedJob(model)?.id;
   const writeClipboard = useMemo(() => clipboardWriter(renderer), [renderer]);
   const [copiedNotice, setCopiedNotice] = useState(false);
@@ -455,6 +460,8 @@ export function App() {
     // while active rows remain, and restarts only when eligibility flips.
   }, [model.screen, shouldPollList(model)]);
 
+  /** Whether the committed graph is on a running or pending pipeline. */
+  const graphActive = isActivePipelineStatus(model.graph?.status ?? "");
   useEffect(() => {
     if (!shouldPollGraph(model)) {
       return;
@@ -499,6 +506,19 @@ export function App() {
         timer = setTimeout(() => void tick(), delay);
       }
     };
+    graphWatchRef.current = {
+      isSlow: () => delay > NORMAL_POLL_MS,
+      wake: () => {
+        if (stopped) {
+          return;
+        }
+        if (timer) {
+          clearTimeout(timer);
+        }
+        delay = NORMAL_POLL_MS;
+        timer = setTimeout(() => void tick(), delay);
+      },
+    };
     if (isActivePipelineStatus(graph.status)) {
       void tick();
     } else {
@@ -506,12 +526,25 @@ export function App() {
     }
     return () => {
       stopped = true;
+      graphWatchRef.current = null;
       if (timer) {
         clearTimeout(timer);
       }
       setRefreshing(null);
     };
   }, [model.screen, model.graph?.iid]);
+
+  /**
+   * A refresh that lands outside the loop can find an active pipeline while the
+   * loop still waits out a watch interval: a run on a terminal pipeline, for
+   * example. The wait must not outlive that discovery.
+   */
+  useEffect(() => {
+    const watch = graphWatchRef.current;
+    if (graphActive && watch?.isSlow()) {
+      watch.wake();
+    }
+  }, [graphActive]);
 
   const traceJobId =
     model.navigating?.kind === "logs"
@@ -612,24 +645,6 @@ export function App() {
   };
 
   /**
-   * Spawn the action the operator confirmed: a retry restarts a job, a run
-   * starts a waiting manual one. Only ever called from a confirmed prompt, so
-   * nothing reaches GitLab before the operator answered it.
-   */
-  const startJobAction = (
-    { job, kind }: { job: JobNode; kind: JobActionKind },
-    onSuccess: (result: { jobId: string | null }) => void,
-  ) => {
-    retryRef.current = { jobId: job.numericId, screen: model.screen, kind };
-    const action = kind === "play" ? playJob(job.numericId) : retryJob(job.numericId);
-    void action
-      .then(onSuccess)
-      .catch((error: unknown) =>
-        dispatch({ type: "retryFailed", message: jobActionFailureMessage(kind, error) }),
-      );
-  };
-
-  /**
    * Settle a finished action. A log screen that cannot follow the new attempt
    * returns to the graph itself, so only an action that produced an attempt
    * needs the extra fetch.
@@ -644,6 +659,31 @@ export function App() {
       }
     };
 
+  /**
+   * The one place a job action reaches GitLab, driven by the reducer's
+   * committed in-flight action rather than by a key handler: the process and
+   * the state can never disagree, a refresh that lands before the confirmation
+   * is accounted for, and two confirming keys in the same frame cannot spawn
+   * two commands.
+   */
+  const spawnedActionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const action = model.retry;
+    if (!action) {
+      spawnedActionRef.current = null;
+      return;
+    }
+    const key = `${action.kind}:${action.jobId}:${action.screen}`;
+    if (spawnedActionRef.current === key) {
+      return;
+    }
+    spawnedActionRef.current = key;
+    const request = action.kind === "play" ? playJob(action.jobId) : retryJob(action.jobId);
+    void request.then(settleJobAction(action.screen)).catch((error: unknown) =>
+      dispatch({ type: "retryFailed", message: jobActionFailureMessage(action.kind, error) }),
+    );
+  }, [model.retry]);
+
   useKeyboard((key) => {
     if (isQuitKey(key.name)) {
       logProc.current?.kill();
@@ -651,14 +691,11 @@ export function App() {
       process.exit(0);
     }
     // An open confirmation owns the keyboard: nothing behind it may move, and
-    // escape answers the prompt instead of going back a screen.
+    // escape answers the prompt instead of going back a screen. Whether the
+    // confirmation still holds is the reducer's call.
     if (model.confirm) {
       if (key.name === "return") {
-        const resolved = pendingJobAction(model);
         dispatch({ type: "confirmJobAction" });
-        if (resolved) {
-          startJobAction(resolved, settleJobAction(model.screen));
-        }
       } else if (key.name === "escape") {
         dispatch({ type: "cancelJobAction" });
       }
@@ -719,7 +756,7 @@ export function App() {
       }
     }
     if (model.screen === "graph" && stageGraph && model.graph) {
-      if (isRetryKey(key) && navigatingRef.current === null && retryRef.current === null) {
+      if (isRetryKey(key) && navigatingRef.current === null) {
         const job = focusedJob(model);
         if (job) {
           dispatch({ type: "requestJobAction", job });
@@ -773,8 +810,7 @@ export function App() {
       model.screen === "logs" &&
       model.graph &&
       isRetryKey(key) &&
-      navigatingRef.current === null &&
-      retryRef.current === null
+      navigatingRef.current === null
     ) {
       const traced = tracedJob(model);
       // The traced attempt is the only job this key may restart; falling back
@@ -792,7 +828,7 @@ export function App() {
     if (model.screen === "attempts" && model.graph) {
       const card = focusedJob(model);
       const attempts = card ? jobAttempts(model.graph.jobs, card) : [];
-      if (isRetryKey(key) && navigatingRef.current === null && retryRef.current === null) {
+      if (isRetryKey(key) && navigatingRef.current === null) {
         const attempt = focusedAttempt(model);
         if (attempt) {
           dispatch({ type: "requestJobAction", job: attempt });

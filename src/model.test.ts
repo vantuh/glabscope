@@ -520,6 +520,20 @@ test("a request while one is in flight or already asked changes nothing", () => 
   expect(reduce(inFlight, { type: "confirmJobAction" })).toEqual(inFlight);
 });
 
+test("a request while a manual refresh is showing opens no prompt", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = reduce(model, { type: "manualRefresh", target: "graph" });
+  const asked = reduce(model, { type: "requestJobAction", job: retryableJob("lint", "10") });
+  expect(asked).toEqual(model);
+  expect(asked.confirm).toBeNull();
+
+  // Once the refresh settles, the same key asks again.
+  const settled = reduce(asked, { type: "refreshGraph", graph: graphWithFailedJob() });
+  expect(reduce(settled, { type: "requestJobAction", job: retryableJob("lint", "10") }).confirm).toEqual(
+    { kind: "retry", jobId: "10", name: "lint" },
+  );
+});
+
 test("confirming refuses a job that left the pipeline while the prompt was open", () => {
   let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
   model = reduce(model, { type: "requestJobAction", job: retryableJob("lint", "10") });
@@ -553,6 +567,42 @@ test("confirming refuses a job whose status changed while the prompt was open", 
   expect(model.retry).toBeNull();
   expect(model.retryMessage).toBe(
     "only failed or canceled jobs can be retried, and only waiting manual jobs can be run",
+  );
+});
+
+test("confirming refuses a job whose status now calls for the other action", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = reduce(model, { type: "requestJobAction", job: retryableJob("lint", "10") });
+  expect(model.confirm).toEqual({ kind: "retry", jobId: "10", name: "lint" });
+
+  // The job became manual while the prompt was open: confirming "retry" must
+  // never quietly turn into a run.
+  model = reduce(model, {
+    type: "refreshGraph",
+    graph: graph([retryableJob("lint", "10", "manual")], "MANUAL"),
+  });
+  expect(pendingJobAction(model)).toBeNull();
+  const confirmed = reduce(model, { type: "confirmJobAction" });
+  expect(confirmed.retry).toBeNull();
+  expect(confirmed.confirm).toBeNull();
+  expect(confirmed.retryMessage).toBe(
+    "that job's status changed while the prompt was open",
+  );
+
+  // And the other way round: a run prompt must not become a retry.
+  const manual = retryableJob("deploy", "20", "manual");
+  let play = reduce(emptyModel, { type: "openGraph", graph: graph([manual], "MANUAL") });
+  play = reduce(play, { type: "requestJobAction", job: manual });
+  expect(play.confirm).toEqual({ kind: "play", jobId: "20", name: "deploy" });
+  play = reduce(play, {
+    type: "refreshGraph",
+    graph: graph([retryableJob("deploy", "20", "canceled")], "CANCELED"),
+  });
+  expect(pendingJobAction(play)).toBeNull();
+  const played = reduce(play, { type: "confirmJobAction" });
+  expect(played.retry).toBeNull();
+  expect(played.retryMessage).toBe(
+    "that job's status changed while the prompt was open",
   );
 });
 
