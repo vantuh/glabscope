@@ -1,6 +1,6 @@
 ## 1. Project Identity
 
-- [ ] 1.1 Change the root package name from `glab-pipeline-viewer` to `glabscope`, updating `bun.lock` only if it records that value; verify the package manifests parse and contain the new name while `private: true` remains unchanged
+- [x] 1.1 Change the root package name from `glab-pipeline-viewer` to `glabscope`, updating `bun.lock` only if it records that value; verify the package manifests parse and contain the new name while `private: true` remains unchanged
 
 ## 2. Public Documentation
 

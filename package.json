@@ -1,5 +1,5 @@
 {
-  "name": "glab-pipeline-viewer",
+  "name": "glabscope",
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
