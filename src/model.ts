@@ -71,6 +71,7 @@ export type Action =
   | { type: "startRetry"; job: JobNode }
   | { type: "retrySucceeded"; jobId: string | null }
   | { type: "retryFailed"; message: string }
+  | { type: "logUnavailable"; message: string }
   | { type: "focusJob"; id: string }
   | { type: "openAttempts" }
   | { type: "focusAttempt"; id: string }
@@ -169,6 +170,24 @@ function retryRefusalMessage(job: Pick<JobNode, "isBridge">): string {
     : "only failed or canceled jobs can be retried";
 }
 
+/**
+ * The log screen cannot carry on for the job it was tracing (no traceable
+ * attempt, or no process to trace with), so the graph takes over with the
+ * reason as a non-fatal message.
+ */
+function leaveLogScreen(model: AppModel, message: string): AppModel {
+  const previous = tracedJob(model);
+  const matched = model.graph ? visibleMatchIndex(model.graph, previous?.id, previous) : -1;
+  return {
+    ...model,
+    retry: null,
+    retryMessage: message,
+    screen: "graph",
+    logJobId: null,
+    focusedJobIndex: matched === -1 ? model.focusedJobIndex : matched,
+  };
+}
+
 /** Point the log at the new attempt; the trace effect respawns for that id. */
 function followRetriedAttempt(model: AppModel, jobId: string): AppModel {
   const previous = tracedJob(model);
@@ -181,20 +200,6 @@ function followRetriedAttempt(model: AppModel, jobId: string): AppModel {
     logBuffer: "",
     logTrace: emptyLogTrace(),
     logDone: false,
-    focusedJobIndex: matched === -1 ? model.focusedJobIndex : matched,
-  };
-}
-
-/** The restart happened but named no attempt, so the graph takes over. */
-function unfollowedRetriedAttempt(model: AppModel): AppModel {
-  const previous = tracedJob(model);
-  const matched = model.graph ? visibleMatchIndex(model.graph, previous?.id, previous) : -1;
-  return {
-    ...model,
-    retry: null,
-    retryMessage: NEW_ATTEMPT_UNFOLLOWED,
-    screen: "graph",
-    logJobId: null,
     focusedJobIndex: matched === -1 ? model.focusedJobIndex : matched,
   };
 }
@@ -311,12 +316,14 @@ export function reduce(model: AppModel, action: Action): AppModel {
       if (model.retry?.screen === "logs" && model.screen === "logs") {
         return action.jobId
           ? followRetriedAttempt(model, action.jobId)
-          : unfollowedRetriedAttempt(model);
+          : leaveLogScreen(model, NEW_ATTEMPT_UNFOLLOWED);
       }
       return { ...model, retry: null };
     }
     case "retryFailed":
       return { ...model, retry: null, retryMessage: action.message };
+    case "logUnavailable":
+      return leaveLogScreen(model, action.message);
     case "focusJob": {
       const index = model.graph?.jobs.findIndex((job) => job.id === action.id) ?? -1;
       if (index < 0) {

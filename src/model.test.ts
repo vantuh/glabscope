@@ -319,14 +319,20 @@ function attempt(name: string, numericId: string, retried: boolean): JobNode {
 test("refreshGraph moves focus to a job's new attempt when the old id is gone", () => {
   let model = reduce(emptyModel, {
     type: "openGraph",
-    graph: graph([attempt("lint", "10", false), job("a")], "RUNNING"),
+    graph: graph([job("a"), attempt("lint", "10", false)], "RUNNING"),
   });
+  // Focus the second card, so a fallback-to-first-card implementation cannot
+  // pass by accident.
   model = reduce(model, { type: "focusJob", id: "gid://gitlab/Ci::Build/10" });
   // The superseded attempt stays in the payload for the attempts list.
   model = reduce(model, {
     type: "refreshGraph",
-    graph: graph([attempt("lint", "10", true), attempt("lint", "12", false), job("a")], "RUNNING"),
+    graph: graph(
+      [job("a"), attempt("lint", "10", true), attempt("lint", "12", false)],
+      "RUNNING",
+    ),
   });
+  expect(focusedJob(model)?.name).toBe("lint");
   expect(focusedJob(model)?.numericId).toBe("12");
 });
 
@@ -346,17 +352,21 @@ test("refreshGraph falls back to the nearest row when the focused job is gone", 
 test("refresh while logs moves focus to the new attempt but keeps tracing the old one", () => {
   let model = reduce(emptyModel, {
     type: "openGraph",
-    graph: graph([attempt("lint", "10", false)], "RUNNING"),
+    graph: graph([job("a"), attempt("lint", "10", false)], "RUNNING"),
   });
   model = reduce(model, { type: "focusJob", id: "gid://gitlab/Ci::Build/10" });
   model = reduce(model, { type: "openLogs" });
   model = reduce(model, { type: "logsReady" });
   model = reduce(model, {
     type: "refreshGraph",
-    graph: graph([attempt("lint", "10", true), attempt("lint", "12", false)], "RUNNING"),
+    graph: graph(
+      [job("a"), attempt("lint", "10", true), attempt("lint", "12", false)],
+      "RUNNING",
+    ),
   });
   expect(model.logJobId).toBe("10");
   expect(model.screen).toBe("logs");
+  expect(focusedJob(model)?.name).toBe("lint");
   expect(focusedJob(model)?.numericId).toBe("12");
 });
 
