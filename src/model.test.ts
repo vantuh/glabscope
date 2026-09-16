@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { emptyModel, focusedJob, reduce, selectedPipeline, shouldPollGraph, shouldPollList } from "./model.ts";
+import { emptyModel, focusedAttempt, focusedJob, reduce, selectedPipeline, shouldPollGraph, shouldPollList } from "./model.ts";
 import { emptyLogTrace } from "./log-text.ts";
 import type { JobNode, PipelineGraph } from "./glab/graph.ts";
 import type { PipelineRow } from "./glab/list.ts";
@@ -17,11 +17,18 @@ function pipeline(id: number, iid: number, status = "success"): PipelineRow {
   };
 }
 
-function graph(jobs: JobNode[], status = "SUCCESS"): PipelineGraph {
-  return { pipelineGid: "gid://gitlab/Ci::Pipeline/1", iid: "9", status, jobs, truncated: false };
+function graph(jobs: JobNode[], status = "SUCCESS", stageNames: string[] = []): PipelineGraph {
+  return {
+    pipelineGid: "gid://gitlab/Ci::Pipeline/1",
+    iid: "9",
+    status,
+    jobs,
+    stageNames,
+    truncated: false,
+  };
 }
 
-function job(name: string, kind = "BUILD"): JobNode {
+function job(name: string, kind = "BUILD", stage = "build"): JobNode {
   return {
     id: name,
     numericId: name,
@@ -29,9 +36,10 @@ function job(name: string, kind = "BUILD"): JobNode {
     status: "success",
     bucket: "success",
     kind,
-    stage: "build",
+    stage,
     needsNames: [],
     isBridge: kind === "BRIDGE",
+    retried: false,
   };
 }
 
@@ -309,4 +317,53 @@ test("manual refresh flag is set by the action and cleared by outcomes", () => {
   model = reduce(model, { type: "refreshError", message: "refresh failed" });
   expect(model.manualRefresh).toBeNull();
   expect(model.refreshWarning).toBe("refresh failed");
+});
+
+test("openGraph focuses the first job of the leftmost GitLab stage", () => {
+  const security = { ...job("sast", "BUILD", "security"), id: "gid://gitlab/Ci::Build/2", numericId: "2" };
+  const prepare = { ...job("prepare", "BUILD", "prepare"), id: "gid://gitlab/Ci::Build/1", numericId: "1" };
+  const model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([security, prepare], "SUCCESS", ["prepare", "security"]),
+  });
+  expect(focusedJob(model)?.name).toBe("prepare");
+});
+
+test("enter on a retried card opens attempts; logs return there; esc returns to graph", () => {
+  const failed = {
+    ...job("lint"),
+    id: "gid://gitlab/Ci::Build/10",
+    numericId: "10",
+    retried: true,
+    status: "failed",
+    bucket: "failed" as const,
+  };
+  const latest = {
+    ...job("lint"),
+    id: "gid://gitlab/Ci::Build/12",
+    numericId: "12",
+  };
+  let model = reduce(emptyModel, { type: "openGraph", graph: graph([failed, latest]) });
+  expect(focusedJob(model)?.id).toBe(latest.id);
+  model = reduce(model, { type: "openAttempts" });
+  expect(model.screen).toBe("attempts");
+  expect(focusedAttempt(model)?.numericId).toBe("12");
+  model = reduce(model, { type: "focusAttempt", id: failed.id });
+  model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "logsReady" });
+  expect(model.screen).toBe("logs");
+  expect(model.logJobId).toBe("10");
+  model = reduce(model, { type: "back" });
+  expect(model.screen).toBe("attempts");
+  expect(focusedAttempt(model)?.numericId).toBe("10");
+  model = reduce(model, { type: "back" });
+  expect(model.screen).toBe("graph");
+});
+
+test("graph polling continues on the attempts screen", () => {
+  const failed = { ...job("lint"), id: "10", numericId: "10", retried: true };
+  const latest = { ...job("lint"), id: "12", numericId: "12" };
+  let model = reduce(emptyModel, { type: "openGraph", graph: graph([failed, latest]) });
+  model = reduce(model, { type: "openAttempts" });
+  expect(shouldPollGraph(model)).toBe(true);
 });

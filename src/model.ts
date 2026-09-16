@@ -1,9 +1,10 @@
 import type { PipelineRow } from "./glab/list.ts";
-import type { JobNode, PipelineGraph } from "./glab/graph.ts";
+import { jobAttempts, latestJobs, type JobNode, type PipelineGraph } from "./glab/graph.ts";
+import { buildStageColumns } from "./layout/stage-graph.ts";
 import { isActivePipelineStatus } from "./status.ts";
 import { appendLogTrace, emptyLogTrace, logVisibleText, type LogTrace } from "./log-text.ts";
 
-export type Screen = "list" | "graph" | "logs";
+export type Screen = "list" | "graph" | "attempts" | "logs";
 
 export type Navigating =
   | { kind: "graph"; pipelineIid: string }
@@ -22,7 +23,9 @@ export type AppModel = {
   selectedIndex: number;
   graph: PipelineGraph | null;
   focusedJobIndex: number;
+  focusedAttemptIndex: number;
   logJobId: string | null;
+  logBackScreen: "graph" | "attempts";
   logBuffer: string;
   logTrace: LogTrace;
   logDone: boolean;
@@ -40,7 +43,9 @@ export const emptyModel: AppModel = {
   selectedIndex: 0,
   graph: null,
   focusedJobIndex: 0,
+  focusedAttemptIndex: 0,
   logJobId: null,
+  logBackScreen: "graph",
   logBuffer: "",
   logTrace: emptyLogTrace(),
   logDone: false,
@@ -57,6 +62,8 @@ export type Action =
   | { type: "refreshError"; message: string }
   | { type: "manualRefresh"; target: "list" | "graph" }
   | { type: "focusJob"; id: string }
+  | { type: "openAttempts" }
+  | { type: "focusAttempt"; id: string }
   | { type: "openLogs" }
   | { type: "logsReady" }
   | { type: "logChunk"; chunk: string }
@@ -69,6 +76,15 @@ export function selectedPipeline(model: AppModel): PipelineRow | undefined {
 
 export function focusedJob(model: AppModel): JobNode | undefined {
   return model.graph?.jobs[model.focusedJobIndex];
+}
+
+export function focusedAttempt(model: AppModel): JobNode | undefined {
+  const card = focusedJob(model);
+  if (!card || !model.graph) {
+    return undefined;
+  }
+  const attempts = jobAttempts(model.graph.jobs, card);
+  return attempts[clamp(model.focusedAttemptIndex, attempts.length)];
 }
 
 export function tracedJob(model: AppModel): JobNode | undefined {
@@ -88,8 +104,32 @@ function clamp(index: number, length: number): number {
   return Math.min(Math.max(index, 0), length - 1);
 }
 
-function focusIndexForId(graph: PipelineGraph, id: string | undefined): number {
-  const index = graph.jobs.findIndex((job) => job.id === id);
+function visibleFocusIndex(
+  graph: PipelineGraph,
+  id: string | undefined,
+  previous?: JobNode,
+): number {
+  const visible = latestJobs(graph.jobs);
+  const columns = buildStageColumns(visible, graph.stageNames);
+  const preferred =
+    visible.find((job) => job.id === id) ??
+    (previous
+      ? visible.find((job) => job.name === previous.name && job.stage === previous.stage)
+      : undefined) ??
+    columns[0]?.jobs[0];
+  if (!preferred) {
+    return 0;
+  }
+  const index = graph.jobs.findIndex((job) => job.id === preferred.id);
+  return index === -1 ? 0 : index;
+}
+
+function attemptFocusIndex(graph: PipelineGraph, card: JobNode | undefined, id: string | undefined): number {
+  if (!card) {
+    return 0;
+  }
+  const attempts = jobAttempts(graph.jobs, card);
+  const index = attempts.findIndex((job) => job.id === id);
   return index === -1 ? 0 : index;
 }
 
@@ -145,7 +185,8 @@ export function reduce(model: AppModel, action: Action): AppModel {
         ...model,
         screen: "graph",
         graph: action.graph,
-        focusedJobIndex: 0,
+        focusedJobIndex: visibleFocusIndex(action.graph, undefined),
+        focusedAttemptIndex: 0,
         error: null,
         errorFatal: false,
         refreshWarning: null,
@@ -153,14 +194,29 @@ export function reduce(model: AppModel, action: Action): AppModel {
         navigating: null,
       };
     case "refreshGraph": {
+      const current = focusedJob(model);
+      // Logs keep tracing a job that may have dropped off the refreshed
+      // graph; do not clamp focus back onto a different card.
       if (model.screen === "logs") {
-        return { ...model, graph: action.graph, refreshWarning: null, manualRefresh: null };
+        const stillThere = current
+          ? action.graph.jobs.findIndex((job) => job.id === current.id)
+          : -1;
+        return {
+          ...model,
+          graph: action.graph,
+          focusedJobIndex: stillThere !== -1 ? stillThere : model.focusedJobIndex,
+          refreshWarning: null,
+          manualRefresh: null,
+        };
       }
-      const currentId = focusedJob(model)?.id;
+      const focusedJobIndex = visibleFocusIndex(action.graph, current?.id, current);
+      const nextCard = action.graph.jobs[focusedJobIndex];
+      const currentAttempt = focusedAttempt(model);
       return {
         ...model,
         graph: action.graph,
-        focusedJobIndex: focusIndexForId(action.graph, currentId),
+        focusedJobIndex,
+        focusedAttemptIndex: attemptFocusIndex(action.graph, nextCard, currentAttempt?.id),
         refreshWarning: null,
         manualRefresh: null,
       };
@@ -176,14 +232,33 @@ export function reduce(model: AppModel, action: Action): AppModel {
       }
       return { ...model, focusedJobIndex: index };
     }
-    case "openLogs": {
+    case "openAttempts": {
       const job = focusedJob(model);
+      if (!job || !model.graph || jobAttempts(model.graph.jobs, job).length < 2) {
+        return model;
+      }
+      return { ...model, screen: "attempts", focusedAttemptIndex: 0 };
+    }
+    case "focusAttempt": {
+      const card = focusedJob(model);
+      if (!card || !model.graph) {
+        return model;
+      }
+      const index = jobAttempts(model.graph.jobs, card).findIndex((job) => job.id === action.id);
+      if (index < 0) {
+        return model;
+      }
+      return { ...model, focusedAttemptIndex: index };
+    }
+    case "openLogs": {
+      const job = model.screen === "attempts" ? focusedAttempt(model) : focusedJob(model);
       if (!job) {
         return model;
       }
       return {
         ...model,
         navigating: { kind: "logs", jobId: job.numericId },
+        logBackScreen: model.screen === "attempts" ? "attempts" : "graph",
       };
     }
     case "logsReady": {
@@ -216,11 +291,18 @@ export function reduce(model: AppModel, action: Action): AppModel {
       if (model.screen === "logs") {
         return {
           ...model,
-          screen: "graph",
+          screen: model.logBackScreen,
           logJobId: null,
           logBuffer: model.logBuffer,
           logTrace: model.logTrace,
           logDone: model.logDone,
+          manualRefresh: null,
+        };
+      }
+      if (model.screen === "attempts") {
+        return {
+          ...model,
+          screen: "graph",
           manualRefresh: null,
         };
       }
@@ -239,7 +321,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
 }
 
 export function shouldPollGraph(model: AppModel): boolean {
-  return model.screen === "graph" && model.graph !== null;
+  return (model.screen === "graph" || model.screen === "attempts") && model.graph !== null;
 }
 
 export function shouldPollList(model: AppModel): boolean {
