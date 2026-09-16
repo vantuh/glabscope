@@ -3,7 +3,7 @@
 # Removes nothing else: not a regular file, not a directory, not a foreign link.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 BIN="glabscope"
 ARTIFACT="$ROOT/dist/$BIN"

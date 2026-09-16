@@ -3,7 +3,7 @@
 # Writes only to the project's dist/ and to PREFIX (default ~/.local/bin).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 BIN="glabscope"
 ARTIFACT="$ROOT/dist/$BIN"
@@ -22,20 +22,28 @@ if ! command -v glab >/dev/null 2>&1; then
   echo "$BIN: warning: install it and run 'glab auth login' before using $BIN." >&2
 fi
 
+# A directory here is not ours to replace, and `ln` would put the entry inside
+# it rather than at $ENTRY, which is not what the caller asked for.
+if [ -d "$ENTRY" ] && [ ! -L "$ENTRY" ]; then
+  echo "$BIN: refusing to install $ENTRY: a directory is already there." >&2
+  echo "$BIN: move it aside and run this script again." >&2
+  exit 1
+fi
+
 echo "$BIN: building $ARTIFACT"
 if ! (cd "$ROOT" && bun run build); then
-  echo "$BIN: build failed; nothing was installed and $ENTRY was left unchanged." >&2
-  exit 1
+  echo "$BIN: build failed; nothing was installed." >&2  exit 1
 fi
 
 if [ ! -x "$ARTIFACT" ]; then
-  echo "$BIN: build run finished but $ARTIFACT is missing or not executable;" >&2
-  echo "$BIN: nothing was installed and $ENTRY was left unchanged." >&2
-  exit 1
+  echo "$BIN: the build run finished but $ARTIFACT is missing or not executable;" >&2
+  echo "$BIN: nothing was installed." >&2  exit 1
 fi
 
 mkdir -p "$PREFIX"
-ln -sf "$ARTIFACT" "$ENTRY"
+# -n so that an entry which is a symlink to a directory is replaced, not
+# followed: following it would create the link outside $PREFIX.
+ln -sfn "$ARTIFACT" "$ENTRY"
 echo "$BIN: installed $ENTRY -> $ARTIFACT"
 
 case ":$PATH:" in
