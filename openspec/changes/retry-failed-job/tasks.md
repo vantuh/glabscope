@@ -1,6 +1,6 @@
 ## 1. Spikes Against the Operator's GitLab
 
-- [ ] 1.1 Spike `glab ci retry <job-id>` against a real project on the operator's GitLab: retry a failed job by numeric id (no `-p`/`-b`) and confirm the command retries that job's attempt, not the latest job with the same name. Verify by running the command, comparing the printed new id against the job GitLab shows, and recording the exact stdout line as a fixture for task 2.1.
+- [x] 1.1 Spike `glab ci retry <job-id>` against a real project on the operator's GitLab: retry a failed job by numeric id (no `-p`/`-b`) and confirm the command retries that job's attempt, not the latest job with the same name. Verify by running the command, comparing the printed new id against the job GitLab shows, and recording the exact stdout line as a fixture for task 2.1.
 This task, not the retry-command spike in 1.1, is superseded by the latest-attempt decision (design decision 5): the jobs connection stays unfiltered, so no `retried: false` argument is sent and there is no argument left to spike. The collapse to one node per job is covered by the fixture in 3.1 instead.
 
 ## 2. Retry Command Wrapper
@@ -30,7 +30,7 @@ This task, not the retry-command spike in 1.1, is superseded by the latest-attem
 
 - [x] 6.1 Run `bun test` and verify every test added or touched by this change passes; report any still-failing test that belongs to the in-progress `gitlab-style-pipeline-graph` change instead of fixing it here.
 - [x] 6.2 List the retry key in the README's key line, next to the existing keys, without reordering or rewriting the rest of that line. Verify the README diff shows only the added key.
-- [ ] 6.3 Manually retry a failed job from the graph and from its log against the operator's GitLab: verify the restarted attempt replaces the old node, the log screen streams the new attempt, `ctrl+r` on a running and on a successful job changes nothing but shows the message, and Esc still returns to the graph and list.
+- [x] 6.3 Manually retry a failed job from the graph and from its log against the operator's GitLab: verify the restarted attempt replaces the old node, the log screen streams the new attempt, `ctrl+r` on a running and on a successful job changes nothing but shows the message, and Esc still returns to the graph and list.
 
 ## 7. Retry on the Job Attempts List
 
