@@ -21,7 +21,11 @@ export type AppModel = {
   manualRefresh: "list" | "graph" | null;
   /** One restart in flight, and the screen it was started from. */
   retry: { jobId: string; screen: Screen } | null;
-  /** Non-fatal retry notice: a local refusal or a GitLab rejection. */
+  /**
+   * Non-fatal retry notice: a local refusal, a GitLab rejection, or the reason
+   * a log screen gave up. Kept until the next navigation or retry, so a
+   * background refresh cannot wipe the reason before it is read.
+   */
   retryMessage: string | null;
   booted: boolean;
   pipelines: PipelineRow[];
@@ -279,7 +283,6 @@ export function reduce(model: AppModel, action: Action): AppModel {
           focusedJobIndex: matched !== -1 ? matched : model.focusedJobIndex,
           refreshWarning: null,
           manualRefresh: null,
-          retryMessage: null,
         };
       }
       const focusedJobIndex = visibleFocusIndex(action.graph, current?.id, current);
@@ -297,7 +300,6 @@ export function reduce(model: AppModel, action: Action): AppModel {
         focusedAttemptIndex: attemptFocusIndex(action.graph, nextCard, keepAttemptId),
         refreshWarning: null,
         manualRefresh: null,
-        retryMessage: null,
       };
     }
     case "refreshError":
@@ -318,7 +320,13 @@ export function reduce(model: AppModel, action: Action): AppModel {
       };
     }
     case "retrySucceeded": {
-      if (model.retry?.screen === "logs" && model.screen === "logs") {
+      // Only the log this restart was started from may be re-attached: the
+      // operator can navigate to another job's log while it is in flight.
+      if (
+        model.retry?.screen === "logs" &&
+        model.screen === "logs" &&
+        model.logJobId === model.retry.jobId
+      ) {
         return action.jobId
           ? followRetriedAttempt(model, action.jobId)
           : leaveLogScreen(model, NEW_ATTEMPT_UNFOLLOWED);

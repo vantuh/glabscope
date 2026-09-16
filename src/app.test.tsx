@@ -2066,9 +2066,6 @@ test("a spawn failure while replacing the trace returns to the graph", async () 
     setup.mockInput.pressEnter();
     await waitForFrame(setup, (frame) => frame.includes("boom"), "log screen");
 
-    // Hold the post-retry refresh so the reason this screen gave up survives
-    // the capture (a successful refresh clears the notice by design).
-    graphGate = Promise.withResolvers();
     spawnFailFromCall = 2;
     retryGate = Promise.withResolvers();
     setup.mockInput.pressKey("r", { ctrl: true });
@@ -2309,6 +2306,113 @@ test("the attempts chrome carries the retry key with the other keys", async () =
     expect(row).toContain(help);
     // Chrome only: the key never leaks into the attempt rows.
     expect(frame.split("\n").filter((line) => line.includes("ctrl+r retry"))).toHaveLength(1);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("an older graph fetch cannot replace a newly opened pipeline", async () => {
+  listDefault = [runningRow(42, 5), row(43, 6, "success")];
+  const setup = await testRender(<App />, { width: 90, height: 18 });
+  try {
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("#42") && frame.includes("#43"),
+      "two pipelines",
+    );
+    graphGate.resolve(
+      graphFor("RUNNING", [{ ...jobIn("job-five", "1", "running"), stage: "build" }]),
+    );
+    setup.mockInput.pressEnter();
+    // Hold every later fetch, including the one pipeline 5's poll starts.
+    graphGate = Promise.withResolvers<PipelineGraph>();
+    await waitForFrame(setup, (frame) => frame.includes("job-five"), "pipeline 5 graph");
+
+    setup.mockInput.pressEscape();
+    await waitForFrame(setup, (frame) => frame.includes("> #42"), "back on the list");
+    setup.mockInput.pressKey("ARROW_DOWN");
+    await waitForFrame(setup, (frame) => frame.includes("> #43"), "pipeline 6 selected");
+    graphScript = [
+      {
+        ...graphFor("SUCCESS", [{ ...jobIn("job-six", "2", "success"), stage: "build" }]),
+        iid: "6",
+      },
+    ];
+    setup.mockInput.pressEnter();
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("pipeline 6") && frame.includes("job-six"),
+      "pipeline 6 graph",
+    );
+    const callsBefore = fetchGraphCalls.length;
+
+    // Pipeline 5's poll, started before the navigation, answers late.
+    graphGate.resolve(
+      graphFor("RUNNING", [{ ...jobIn("job-five", "1", "running"), stage: "build" }]),
+    );
+    await Bun.sleep(30);
+    const frame = await waitForFrame(setup, (frame) => frame.includes("job-six"), "pipeline 6 kept");
+    expect(frame).not.toContain("job-five");
+    expect(frame).toContain("pipeline 6");
+    expect(fetchGraphCalls.length).toBe(callsBefore);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a retry landing after another job's log was opened leaves it alone", async () => {
+  graphGate.resolve(
+    graphFor("FAILED", [
+      { ...jobIn("lint", "10", "failed"), stage: "test" },
+      { ...jobIn("deploy", "20", "failed"), stage: "production" },
+    ]),
+  );
+  const setup = await testRender(<App />, { width: 90, height: 18 });
+  try {
+    await openFailedGraph(setup);
+    const firstTrace = queuedTrace();
+    traceStreams.push(firstTrace);
+    await waitForFrame(setup, (frame) => frame.includes("lint"), "lint card");
+    // The leftmost stage holds lint, so it is focused; open its log.
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("log lint"), "log of lint");
+    firstTrace.write("lint output\n");
+    await waitForFrame(setup, (frame) => frame.includes("lint output"), "lint chunk");
+
+    retryGate = Promise.withResolvers();
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitFor(() => retryCalls.length === 1, "retry call");
+    expect(retryCalls).toEqual(["10"]);
+
+    // Leave for the other job's log while lint's restart is still in flight.
+    setup.mockInput.pressEscape();
+    await waitForFrame(setup, (frame) => frame.includes("pipeline 5"), "graph screen");
+    const secondTrace = queuedTrace();
+    traceStreams.push(secondTrace);
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    await waitForFrame(
+      setup,
+      (frame) => focusedCard(frame, statusIcon("failed"), "deploy"),
+      "deploy focused",
+    );
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("log deploy"), "log of deploy");
+    secondTrace.write("deploy output\n");
+    const before = await waitForFrame(
+      setup,
+      (frame) => frame.includes("deploy output"),
+      "deploy chunk",
+    );
+    expect(before).not.toContain("lint output");
+    const spawnsBefore = [...spawnJobIds];
+
+    retryGate.resolve({ jobId: "12" });
+    await Bun.sleep(40);
+    const frame = await waitForFrame(setup, (frame) => frame.includes("log deploy"), "deploy log kept");
+    expect(spawnJobIds).toEqual(spawnsBefore);
+    expect(frame).toContain("deploy output");
+    expect(frame).not.toContain("lint output");
+    expect(frame).not.toContain("log lint");
   } finally {
     setup.renderer.destroy();
   }

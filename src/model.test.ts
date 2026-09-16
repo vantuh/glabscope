@@ -497,19 +497,23 @@ test("a rejected retry clears the in-flight mark and keeps a non-fatal message",
   expect(model.screen).toBe("graph");
 });
 
-test("navigation and a successful graph refresh clear the retry notice", () => {
-  const refused = reduce(emptyModel, {
-    type: "startRetry",
-    job: retryableJob("lint", "10", "success"),
-  });
-  expect(refused.retryMessage).not.toBeNull();
-
+test("navigation or another retry clears the retry notice", () => {
   let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
   model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10", "success") });
+  expect(model.retryMessage).toBe("only failed or canceled jobs can be retried");
   expect(reduce(model, { type: "focusJob", id: "gid://gitlab/Ci::Build/10" }).retryMessage).toBeNull();
+  expect(reduce(model, { type: "startRetry", job: retryableJob("lint", "10") }).retryMessage).toBeNull();
+});
 
+test("a successful refresh keeps the retry notice until the operator moves", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
   model = reduce(model, { type: "startRetry", job: retryableJob("lint", "10", "success") });
-  expect(reduce(model, { type: "refreshGraph", graph: graphWithFailedJob() }).retryMessage).toBeNull();
+  // A poll landing right after the notice must not wipe the reason with it.
+  model = reduce(model, {
+    type: "refreshGraph",
+    graph: graph([retryableJob("lint", "10")], "FAILED"),
+  });
+  expect(model.retryMessage).toBe("only failed or canceled jobs can be retried");
 });
 
 test("a graph refresh while the restart runs leaves the retry in flight", () => {
@@ -529,6 +533,32 @@ test("retrySucceeded on the graph clears the in-flight mark", () => {
   expect(model.retry).toBeNull();
   expect(model.retryMessage).toBeNull();
   expect(model.screen).toBe("graph");
+});
+
+test("a retry that lands after another log was opened leaves that log alone", () => {
+  const first = { ...retryableJob("lint", "10"), id: "gid://gitlab/Ci::Build/10" };
+  const second = { ...retryableJob("deploy", "20"), id: "gid://gitlab/Ci::Build/20" };
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([first, second], "FAILED"),
+  });
+  model = openLogOn(model, "gid://gitlab/Ci::Build/10");
+  model = reduce(model, { type: "logChunk", chunk: "first attempt\n" });
+  model = reduce(model, { type: "startRetry", job: first });
+  expect(model.retry).toEqual({ jobId: "10", screen: "logs" });
+
+  // The operator leaves for the other job's log while the restart is in flight.
+  model = reduce(model, { type: "back" });
+  model = openLogOn(model, "gid://gitlab/Ci::Build/20");
+  model = reduce(model, { type: "logChunk", chunk: "second job\n" });
+  expect(model.logJobId).toBe("20");
+
+  model = reduce(model, { type: "retrySucceeded", jobId: "12" });
+  expect(model.screen).toBe("logs");
+  expect(model.logJobId).toBe("20");
+  expect(model.logBuffer).toContain("second job");
+  expect(model.logBuffer).not.toContain("first attempt");
+  expect(model.retry).toBeNull();
 });
 
 function openLogOn(model: AppModel, id: string): AppModel {
@@ -622,7 +652,7 @@ test("refreshGraph keeps attempts focus on an earlier attempt that was retried",
   expect(focusedAttempt(model)?.numericId).toBe("10");
 });
 
-test("a retry started from the attempts list does not take over the log screen", () => {
+test("a retry started from the attempts list never re-attaches a log screen", () => {
   const superseded = { ...retryableJob("lint", "10"), retried: true };
   const latest = { ...retryableJob("lint", "12"), retried: false };
   let model = reduce(emptyModel, {

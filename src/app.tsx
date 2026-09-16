@@ -361,7 +361,7 @@ export function App() {
       }
       setRefreshing("graph");
       try {
-        const graph = await fetchGraphNow(String(iid));
+        const graph = await fetchGraphNow(String(iid), () => stopped);
         if (stopped) {
           return;
         }
@@ -475,14 +475,15 @@ export function App() {
 
   /**
    * Graph fetches overlap (poll, manual refresh, a restart), so only the newest
-   * result may land: a poll that started before a restart must not put the
-   * superseded node back.
+   * result may land: a poll that started before a restart, or before another
+   * pipeline was opened, must not put its graph back. `isObsolete` lets a
+   * canceled polling loop drop its own result before it dispatches.
    */
   const graphRequestRef = useRef(0);
-  const fetchGraphNow = (iid: string) => {
+  const fetchGraphNow = (iid: string, isObsolete?: () => boolean) => {
     const request = (graphRequestRef.current += 1);
     return fetchPipelineGraph(iid).then((graph) => {
-      if (request === graphRequestRef.current) {
+      if (request === graphRequestRef.current && !isObsolete?.()) {
         dispatch({ type: "refreshGraph", graph });
       }
       return graph;
@@ -557,6 +558,8 @@ export function App() {
         const target = { kind: "graph" as const, pipelineIid: String(row.iid) };
         navigatingRef.current = target;
         dispatch({ type: "startNavigating", target });
+        // Any fetch still in flight belongs to the pipeline being left.
+        graphRequestRef.current += 1;
         void fetchPipelineGraph(String(row.iid))
           .then((graph) => dispatch({ type: "openGraph", graph }))
           .catch((error: unknown) =>
