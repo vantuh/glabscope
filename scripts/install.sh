@@ -9,6 +9,16 @@ BIN="glabscope"
 ARTIFACT="$ROOT/dist/$BIN"
 ENTRY="$PREFIX/$BIN"
 
+# Drops our own entry when the build output it names cannot run, so a failed
+# build never leaves the command pointing at a missing binary. An entry still
+# pointing at an older but runnable build is left alone: it still works.
+drop_dangling_entry() {
+  if [ -L "$ENTRY" ] && [ "$(readlink "$ENTRY")" = "$ARTIFACT" ] && [ ! -x "$ARTIFACT" ]; then
+    rm "$ENTRY"
+    echo "$BIN: removed $ENTRY, which pointed at the missing $ARTIFACT." >&2
+  fi
+}
+
 # A missing build tool is fatal, and it is checked before anything is touched.
 if ! command -v bun >/dev/null 2>&1; then
   echo "$BIN: bun is required to build the command but was not found on PATH." >&2
@@ -32,12 +42,16 @@ fi
 
 echo "$BIN: building $ARTIFACT"
 if ! (cd "$ROOT" && bun run build); then
-  echo "$BIN: build failed; nothing was installed." >&2  exit 1
+  echo "$BIN: build failed; nothing was installed." >&2
+  drop_dangling_entry
+  exit 1
 fi
 
 if [ ! -x "$ARTIFACT" ]; then
   echo "$BIN: the build run finished but $ARTIFACT is missing or not executable;" >&2
-  echo "$BIN: nothing was installed." >&2  exit 1
+  echo "$BIN: nothing was installed." >&2
+  drop_dangling_entry
+  exit 1
 fi
 
 mkdir -p "$PREFIX"
