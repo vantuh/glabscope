@@ -45,10 +45,10 @@ Set `GLAB_BIN` if `glab` is not the binary on `PATH` that you want to use.
 
 | Screen | Keys |
 | --- | --- |
-| Pipeline list | `↑`/`↓` move · `enter` open the job graph · `r` refresh |
-| Job graph | `←`/`↑`/`↓`/`→` move focus (`↑`/`↓` inside a stage, `←`/`→` across stages) · `enter` open the log, or the attempts list when the job has earlier attempts · `r` refresh · `ctrl+r` retry/run the focused job · `esc` back to the list |
-| Attempts | `↑`/`↓` move · `enter` open that attempt's log · `ctrl+r` retry the focused attempt · `esc` back to the graph |
-| Job log | drag with the mouse to copy the selection · `y` copy the whole captured log · `ctrl+r` retry the traced job · `esc` back (the chrome marks the trace `live` or `ended`) |
+| Pipeline list | `↑`/`↓` move · `enter` open the job graph · `r` refresh · `o` open in the browser |
+| Job graph | `←`/`↑`/`↓`/`→` move focus (`↑`/`↓` inside a stage, `←`/`→` across stages) · `enter` open the log, or the attempts list when the job has earlier attempts · `r` refresh · `ctrl+r` retry/run the focused job · `o` open in the browser · `esc` back to the list |
+| Attempts | `↑`/`↓` move · `enter` open that attempt's log · `ctrl+r` retry the focused attempt · `o` open in the browser · `esc` back to the graph |
+| Job log | drag with the mouse to copy the selection · `y` copy the whole captured log · `ctrl+r` retry the traced job · `o` open in the browser · `esc` back (the chrome marks the trace `live` or `ended`) |
 | Confirmation prompt | `enter` confirm · `esc` cancel — every other key is ignored while it is open, except `q`, which still quits |
 | Any screen | `q` quit |
 
