@@ -1,7 +1,7 @@
 ## 1. Spikes Against the Operator's GitLab
 
 - [ ] 1.1 Spike `glab ci retry <job-id>` against a real project on the operator's GitLab: retry a failed job by numeric id (no `-p`/`-b`) and confirm the command retries that job's attempt, not the latest job with the same name. Verify by running the command, comparing the printed new id against the job GitLab shows, and recording the exact stdout line as a fixture for task 2.1.
-- [ ] 1.2 Spike `jobs(retried: false)` with `glab api graphql` on that project against a pipeline that has a retried-away attempt. Verify the query is accepted, the retried-away attempt is absent, and the latest attempt is returned with its `needs` nodes intact. If the argument is rejected, stop and report before editing `src/glab/query.ts`, since the job-graph delta assumes a single latest-attempt node.
+Superseded by the latest-attempt decision (design decision 5): the jobs connection stays unfiltered, so no `retried: false` argument is sent and there is no argument left to spike. The collapse to one node per job is covered by the fixture in 3.1 instead.
 
 ## 2. Retry Command Wrapper
 
@@ -10,7 +10,7 @@
 
 ## 3. Latest Attempt in the Graph
 
-- [ ] 3.1 Request the latest attempt per job by adding `retried: false` to the jobs connection in `src/glab/query.ts`, and add a fixture with a retried-away attempt. Verify `src/glab/query.test.ts` asserts the argument and `src/glab/graph.test.ts` parses that fixture into exactly one node per job name with its `needs` intact.
+- [ ] 3.1 Keep the jobs connection unfiltered (no `retried: false`, so earlier attempts stay in the payload for the attempts list) and add `src/fixtures/pipeline-jobs-retried.json` with a retried-away attempt. Verify `src/glab/query.test.ts` records that the query asks for every attempt, and `src/glab/graph.test.ts` collapses that fixture into exactly one node per job name+stage with its `needs` intact.
 - [ ] 3.2 Reconcile graph focus by job id first and by job name when the id is gone, so an attempt swap keeps focus on the same job. Verify `src/model.test.ts` covers id present, id replaced by a new attempt with the same name, and neither present falling back to the nearest row.
 
 ## 4. Retry on the Job Graph

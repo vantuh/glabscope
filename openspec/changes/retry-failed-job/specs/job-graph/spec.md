@@ -1,19 +1,27 @@
 ## MODIFIED Requirements
 
 ### Requirement: Same-pipeline needs graph
-For the selected pipeline the system SHALL display jobs as nodes and `needs` relationships as directed edges. Layout MUST follow dependency order (downstream after upstream), not stage columns alone. Trigger or bridge jobs MUST appear as ordinary nodes; v1 MUST NOT open a child pipeline graph from them. Each job MUST appear as a single node showing its latest attempt: earlier attempts of a retried job MUST NOT appear as extra nodes.
+For the selected pipeline the system SHALL display jobs as rounded cards grouped into stage columns from left to right in GraphQL `pipeline.stages.nodes` order (GitLab pipeline page), not as a single top-to-bottom list and not by sorting stage names. Named stages present on jobs but missing from that list MUST append after it. Jobs that share a stage MUST stack in that stage’s column. The graph SHALL show one card per job name+stage using the latest attempt (`retried` false, else highest numeric id); earlier attempts MUST remain available after confirm when more than one exists, and MUST NOT appear as additional cards. The system SHALL draw directed arrows only for GraphQL `needs` among those visible cards (from needed jobs to dependents). Layout MUST NOT invent edges from stage order alone. Trigger or bridge jobs MUST appear as ordinary cards; v1 MUST NOT open a child pipeline graph from them.
 
 #### Scenario: Jobs with needs
 - **WHEN** the selected pipeline has jobs linked by `needs`
-- **THEN** those jobs are shown with edges from needed jobs to dependents
+- **THEN** those jobs are shown as cards with visible arrows from needed jobs to dependents
 
 #### Scenario: Jobs without needs
 - **WHEN** jobs only share stages and have no `needs`
-- **THEN** the system still shows every job in the pipeline without inventing false edges
+- **THEN** the system still shows every job in the pipeline in their stage columns without inventing false edges
 
 #### Scenario: Bridge job
 - **WHEN** the pipeline contains a trigger or bridge job
-- **THEN** it is shown as a single node and confirming it does not replace the graph with a child pipeline
+- **THEN** it is shown as a single card and confirming it does not replace the graph with a child pipeline
+
+#### Scenario: Stage columns
+- **WHEN** the pipeline has more than one stage
+- **THEN** earlier stages from `stages.nodes` appear to the left of later stages (for example `prepare` left of `security`) and jobs in the same stage appear in the same column
+
+#### Scenario: Retried job on the graph
+- **WHEN** a job name+stage has earlier attempts and a latest attempt
+- **THEN** the graph shows a single card for that job with the latest attempt’s status, and `needs` arrows attach only to visible latest cards
 
 #### Scenario: A job has been retried
 - **WHEN** a job in the pipeline has one or more earlier attempts

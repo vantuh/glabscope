@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Keymap in chrome, not mixed into content
-Each framed screen MUST show the keys that work on that screen in a dim help line that is part of the chrome (footer or title area), not mixed into the first content row. A key that only applies to some jobs MUST still be listed on the screens where it can apply.
+Each framed screen MUST show the keys that work on that screen in a dim help line that is part of the chrome (footer or title area), not mixed into the first content row. Transient status text MUST NOT be appended to that help line: the help line's own text MUST be the same whether or not a status is pending. A key that only applies to some jobs MUST still be listed on the screens where it can apply.
 
 #### Scenario: List help
 - **WHEN** the pipeline list is visible
@@ -14,6 +14,10 @@ Each framed screen MUST show the keys that work on that screen in a dim help lin
 #### Scenario: Log help
 - **WHEN** the job log is visible
 - **THEN** retry, back, and live vs ended are visible in the chrome, and the trace body is only log text
+
+#### Scenario: A status does not extend the help line
+- **WHEN** a transient status is visible on a screen and then clears
+- **THEN** the help line text is unchanged, with no status word inside it in either state
 
 #### Scenario: Retry key pressed on a job that cannot be retried
 - **WHEN** the operator presses the retry key on a job that is not failed or canceled

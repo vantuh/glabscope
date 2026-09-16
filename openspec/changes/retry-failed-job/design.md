@@ -37,8 +37,8 @@ Matched anywhere in stdout and tolerant of SGR sequences, because `glab`'s log w
 **4. Run the retry through `runGlab`, not a PTY.**
 A numeric job id skips glab's interactive selection prompt, so no PTY is needed; `runGlab` already bounds the process with a timeout and returns stdout/stderr/code. A PTY would only complicate exit handling.
 
-**5. Add `retried: false` to the jobs connection in `pipelineJobsQuery`.**
-A retried job must remain one node. Filtering to the latest attempt also removes the current ambiguity where two nodes share a name and `needs` edges are matched by name. Cost: instances that do not support the `retried` argument would fail the query; the spike task verifies this on the operator's GitLab before the query changes.
+**5. Keep `jobs(first: 100)` unfiltered and derive the single visible card per job from the payload.**
+`latestJobs` already collapses each job name+stage to its latest attempt (`retried` false, else highest numeric id), and `buildStageGraph` renders only those cards with `needs` matched by name, so a retried job is one node today. Asking GitLab for `jobs(retried: false)` would drop earlier attempts from the payload, which makes the attempts list (`jobAttempts(...).length > 1`) unreachable — a capability this change does not modify — and would also fail on instances without the `retried` argument. Cost: superseded attempts consume part of the 100-job page, so a heavily retried pipeline is likelier to truncate. The graph tests still pin the one-node-per-job collapse with a retried-away fixture.
 
 **6. Reconcile graph focus by job id, then by job name.**
 After a retry the previously focused gid no longer exists in the latest-attempt view, so id-only reconciliation would clamp focus to the first job. Falling back to the job name keeps focus on the same job across an attempt swap and is a no-op when the id still exists. Selection still prefers the id, so unrelated reordering behaves exactly as today.
@@ -55,7 +55,7 @@ The file already owns `isQuitKey`; the Ctrl+R predicate belongs beside it so the
 ## Risks / Trade-offs
 
 - [glab changes the `Retried job (ID: …)` wording] → the parse is confined to one exported function with its own unit test, and a parse miss degrades to the documented graph fallback rather than a wrong behaviour; the spike task pins the format on the installed glab before the UI work lands.
-- [`retried: false` unsupported on the operator's GitLab] → verified by spike task 1.1 before the query edit; if unsupported, implementation stops and this design (and the job-graph delta's latest-attempt clause) must be revisited rather than shipping duplicate nodes.
+- [Earlier attempts now stay in the payload] → the graph collapses them with `latestJobs` (pinned by a retried-away fixture), so the cost is the 100-job page rather than duplicate nodes; the attempts list keeps working.
 - [Retry of a job GitLab still considers active, or one canceled by the pipeline] → the local gate blocks running/pending jobs, and remaining GitLab refusals surface as a non-fatal message with the graph or log intact.
 - [Retrying a job flips a terminal pipeline back to active] → no code change: the existing polling rules already branch on pipeline status, and a fresh graph fetch follows the retry.
 - [Graph refresh pauses while the log screen is open, so the retried node updates only after returning] → accepted; the log screen itself streams the new attempt live, which is the stronger signal.
