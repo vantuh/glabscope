@@ -8,4 +8,4 @@
 
 ## 3. Verification
 
-- [ ] 3.1 Search the active package metadata and README for the old project name, then run `bun test` and `./node_modules/.bin/tsc --noEmit`; verify the old identity is absent from current public-facing files and all available checks pass
+- [x] 3.1 Search the active package metadata and README for the old project name, then run `bun test` and `./node_modules/.bin/tsc --noEmit`; verify the old identity is absent from current public-facing files and all available checks pass
