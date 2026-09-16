@@ -131,11 +131,15 @@ Log-screen chrome MUST show a short-lived `copied to clipboard` notice whenever 
 - **THEN** the clipboard is unchanged and no `copied to clipboard` notice appears
 
 ### Requirement: Retry the traced job from its log
-Pressing the retry key on the log screen SHALL restart the job being traced and then show the newly created attempt in the same screen. The system SHALL only request a restart when the traced job's status is failed or canceled; for any other status the system MUST NOT contact GitLab and MUST show a short non-fatal message instead. The restart MUST go through the GitLab CLI retry command for that job's id, and the system MUST NOT restart a job by any other route.
+Pressing the retry key on the log screen SHALL show the confirmation prompt for the traced job and, once the operator confirms it, restart that job in GitLab and then show the newly created attempt in the same screen. The system SHALL only request a restart when the traced job's status is failed or canceled; for any other status the system MUST NOT contact GitLab and MUST show a short non-fatal message instead. No restart MUST be requested before the operator confirms the prompt. The restart MUST go through the GitLab CLI retry command for that job's id, and the system MUST NOT restart a job by any other route.
 
 #### Scenario: Retry a failed job from its log
-- **WHEN** the operator is reading the log of a failed job and presses the retry key
+- **WHEN** the operator is reading the log of a failed job and presses the retry key and confirms the prompt
 - **THEN** that job is restarted in GitLab, the log screen clears the failed trace, and the new attempt’s live trace streams in the same framed log panel
+
+#### Scenario: Retry prompt is cancelled
+- **WHEN** the operator presses the retry key while reading the log of a failed job and then cancels the prompt
+- **THEN** no restart is requested, the current trace keeps streaming on the screen, and no message appears
 
 #### Scenario: Retry feedback while the restart is in flight
 - **WHEN** a retry has been requested from the log screen and GitLab has not answered yet
@@ -143,7 +147,7 @@ Pressing the retry key on the log screen SHALL restart the job being traced and 
 
 #### Scenario: Traced job is not retryable
 - **WHEN** the operator presses the retry key while the traced job is running, pending, successful, skipped, manual, or created
-- **THEN** no restart is requested, the current log stays visible, and a short non-fatal message explains that only failed or canceled jobs can be retried
+- **THEN** no restart is requested and no prompt appears, the current log stays visible, and a short non-fatal message explains that only failed or canceled jobs can be retried
 
 #### Scenario: Repeated retry while one is in flight
 - **WHEN** the operator presses the retry key again while a retry from the log screen is still in flight
