@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Stay on the log after the job ends
-When the job finishes or the tracer process exits, the system MUST keep the log screen and its buffer visible. The operator leaves that trace only with the back action, which MUST return to the job graph with the same job focused if that job still exists. A successful retry started from the log screen is the one other way the current trace ends: the screen then shows the new attempt instead.
+When the job finishes or the tracer process exits, the system MUST keep the log screen and its buffer visible. The operator leaves that trace only with the back action, which MUST return to the job graph with the same job focused if that job still exists, or to the attempts list when the log was opened from it. A successful retry started from the log screen is the one other way the current trace ends: the screen then shows the new attempt instead.
 
 #### Scenario: Job completes while watching
 - **WHEN** a running job reaches a terminal status while the log screen is open
@@ -12,8 +12,12 @@ When the job finishes or the tracer process exits, the system MUST keep the log 
 - **THEN** the log screen stays open until the back action
 
 #### Scenario: Back to graph
-- **WHEN** the operator uses the back action on the log screen
+- **WHEN** the operator uses the back action on a log opened from the job graph
 - **THEN** they return to the job graph, not the pipeline list
+
+#### Scenario: Back to the attempts list
+- **WHEN** the operator uses the back action on a log opened from the attempts list
+- **THEN** they return to that attempts list with the same attempt focused
 
 #### Scenario: Retry replaces the traced attempt
 - **WHEN** a retry started from the log screen succeeds
@@ -43,6 +47,10 @@ Pressing the retry key on the log screen SHALL restart the job being traced and 
 #### Scenario: GitLab rejects the retry
 - **WHEN** the retry request is rejected by GitLab or the CLI
 - **THEN** the current log stays visible and a non-fatal message shows why the restart was refused
+
+#### Scenario: Another log was opened while the restart was in flight
+- **WHEN** a restart started from one job's log is still in flight and the operator opens another job's log
+- **THEN** the restart does not take over that screen: the second job's log stays visible and only the in-flight mark clears when the restart completes
 
 #### Scenario: The new attempt cannot be identified
 - **WHEN** the restart succeeded but the system cannot determine the new attempt’s job id

@@ -16,8 +16,8 @@ This task, not the retry-command spike in 1.1, is superseded by the latest-attem
 ## 4. Retry on the Job Graph
 
 - [x] 4.1 Add the `ctrl+r` key predicate to `src/keys.ts` beside `isQuitKey` and use it in both screen handlers. Verify `src/keys.test.ts` accepts Ctrl+R, rejects plain `r`, and rejects Ctrl+R combined with another modifier.
-- [x] 4.2 Add reducer state for one in-flight retry per job plus a non-fatal retry message, rejecting an in-flight retry for the same job and clearing the message on navigation or a successful refresh. Verify `src/model.test.ts` covers accept, duplicate rejection, refusal message, failure message, and message clearing.
-- [x] 4.3 Wire `ctrl+r` on the graph: call `retryJob` for the focused job, refresh the graph immediately on success (newest fetch wins over a poll already in flight), and show refusals, in-flight state, and GitLab failures non-fatally. Verify `src/app.test.tsx` shows one retry call for a failed job with focus kept on that job's new attempt, no `glab` call plus a message for a non-retryable job, one call for a repeated press while in flight, and the graph still navigable after a failed retry.
+- [x] 4.2 Add reducer state for one in-flight retry per job plus a non-fatal retry message, rejecting an in-flight retry for the same job and clearing the message on navigation or the next retry, so a background refresh cannot wipe a reason before it is read. Verify `src/model.test.ts` covers accept, duplicate rejection, refusal message, failure message, and message clearing.
+- [x] 4.3 Wire `ctrl+r` on the graph: call `retryJob` for the focused job, refresh the graph immediately on success (newest fetch wins over a poll already in flight or an older fetch from another pipeline), and show refusals, in-flight state, and GitLab failures non-fatally. Verify `src/app.test.tsx` shows one retry call for a failed job with focus kept on that job's new attempt, no `glab` call plus a message for a non-retryable job, one call for a repeated press while in flight, and the graph still navigable after a failed retry.
 - [x] 4.4 Add `ctrl+r retry` to the graph key-help footer. Verify a captured frame for the graph screen contains the retry key alongside the existing keys.
 
 ## 5. Retry on the Job Log
@@ -38,3 +38,10 @@ This task, not the retry-command spike in 1.1, is superseded by the latest-attem
 - [x] 7.2 Wire `ctrl+r` on the attempts screen: restart the focused attempt through `retryJob`, refresh the graph immediately on success, and show refusals, in-flight state, and GitLab failures non-fatally above the rows. Verify `src/app.test.tsx` shows one call for the focused attempt's id with focus on the replacement row, no `glab` call plus a message for a non-retryable attempt, one call for a repeated press while in flight, and the rows still navigable after a failed retry.
 - [x] 7.3 Add `ctrl+r retry` to the attempts key-help footer. Verify a captured frame for the attempts screen contains the retry key in the chrome row only.
 - [x] 7.4 Re-run `bun test` and `./node_modules/.bin/tsc --noEmit` after section 7: every test added or touched by this change must pass.
+
+## 8. Review Follow-ups
+
+- [x] 8.1 Only re-attach a log screen whose traced attempt is the one the restart started from, so a restart that completes after the operator opened another job's log cannot take over that screen. Verify `src/model.test.ts` and `src/app.test.tsx` both cover navigating to a second log mid-restart.
+- [x] 8.2 Close the graph-fetch ordering hole: a canceled polling loop drops its own late answer, and opening another pipeline invalidates every fetch already in flight. Verify `src/app.test.tsx` holds pipeline 5's poll across a navigation to pipeline 6 and asserts the late answer does not land.
+- [x] 8.3 Keep the retry notice until navigation instead of clearing it on any successful refresh, so the reason a log screen returned to the graph survives the post-retry refresh. Verify `src/model.test.ts` asserts the notice survives a refresh and both `src/model.test.ts` and `src/app.test.tsx` assert navigation clears it.
+- [x] 8.4 Qualify the back action in the `job-logs` delta by where the log was opened, so the MODIFIED requirement no longer contradicts the archived `job-graph` requirement that a log opened from the attempts list returns there.
