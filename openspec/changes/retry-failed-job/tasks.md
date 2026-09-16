@@ -15,16 +15,16 @@ Superseded by the latest-attempt decision (design decision 5): the jobs connecti
 
 ## 4. Retry on the Job Graph
 
-- [ ] 4.1 Add the `ctrl+r` key predicate to `src/keys.ts` beside `isQuitKey` and use it in both screen handlers. Verify `src/keys.test.ts` accepts Ctrl+R, rejects plain `r`, and rejects Ctrl+R combined with another modifier.
+- [x] 4.1 Add the `ctrl+r` key predicate to `src/keys.ts` beside `isQuitKey` and use it in both screen handlers. Verify `src/keys.test.ts` accepts Ctrl+R, rejects plain `r`, and rejects Ctrl+R combined with another modifier.
 - [x] 4.2 Add reducer state for one in-flight retry per job plus a non-fatal retry message, rejecting an in-flight retry for the same job and clearing the message on navigation or a successful refresh. Verify `src/model.test.ts` covers accept, duplicate rejection, refusal message, failure message, and message clearing.
-- [ ] 4.3 Wire `ctrl+r` on the graph: call `retryJob` for the focused job, refresh the graph immediately on success, and show refusals, in-flight state, and GitLab failures non-fatally. Verify `src/app.test.tsx` shows one retry call for a failed job with focus kept on that job's name, no `glab` call plus a message for a non-retryable job, one call for a repeated press while in flight, and the graph still navigable after a failed retry.
-- [ ] 4.4 Add `ctrl+r retry` to the graph key-help footer. Verify a captured frame for the graph screen contains the retry key alongside the existing keys.
+- [x] 4.3 Wire `ctrl+r` on the graph: call `retryJob` for the focused job, refresh the graph immediately on success, and show refusals, in-flight state, and GitLab failures non-fatally. Verify `src/app.test.tsx` shows one retry call for a failed job with focus kept on that job's name, no `glab` call plus a message for a non-retryable job, one call for a repeated press while in flight, and the graph still navigable after a failed retry.
+- [x] 4.4 Add `ctrl+r retry` to the graph key-help footer. Verify a captured frame for the graph screen contains the retry key alongside the existing keys.
 
 ## 5. Retry on the Job Log
 
 - [x] 5.1 Add a reducer action that re-attaches the log screen to a new attempt id, resetting the trace buffer, and a fallback that returns to the graph when no new id is available. Verify `src/model.test.ts` covers both, plus rejection while a retry is already in flight.
-- [ ] 5.2 Wire `ctrl+r` on the log screen: restart the traced job, re-attach the trace to the new attempt, and show refusals and failures without dropping the visible log. Verify `src/app.test.tsx` shows a new `glab ci trace` spawn for the new job id with the previous body cleared, no respawn plus a message for a non-retryable job, the log kept after a failed retry, and the graph screen with a message when the new id cannot be read.
-- [ ] 5.3 Add `ctrl+r retry` to the log key-help footer without mixing it into the trace body. Verify a captured frame for the log screen contains the retry key in the chrome row only.
+- [x] 5.2 Wire `ctrl+r` on the log screen: restart the traced job, re-attach the trace to the new attempt, and show refusals and failures without dropping the visible log. Verify `src/app.test.tsx` shows a new `glab ci trace` spawn for the new job id with the previous body cleared, no respawn plus a message for a non-retryable job, the log kept after a failed retry, and the graph screen with a message when the new id cannot be read.
+- [x] 5.3 Add `ctrl+r retry` to the log key-help footer without mixing it into the trace body. Verify a captured frame for the log screen contains the retry key in the chrome row only.
 
 ## 6. Verification
 

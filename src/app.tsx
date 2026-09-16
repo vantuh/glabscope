@@ -12,12 +12,13 @@ import {
   tracedJob,
 } from "./model.ts";
 import { IDLE_POLL_MS, NORMAL_POLL_MS, nextPollDelay } from "./polling.ts";
-import { isQuitKey } from "./keys.ts";
+import { isQuitKey, isRetryKey } from "./keys.ts";
 import { probeGlab } from "./glab/probe.ts";
 import { listPipelines } from "./glab/list.ts";
 import { fetchPipelineGraph, jobAttempts, NeedsUnavailableError, type JobNode } from "./glab/graph.ts";
 import { RateLimitedError } from "./glab/ratelimit.ts";
 import { spawnTrace } from "./glab/trace.ts";
+import { isRetryableJob, retryJob } from "./glab/retry.ts";
 import { clipboardWriter, copyPlainText } from "./clipboard.ts";
 import { BUCKET_COLOR, isActivePipelineStatus, statusIcon } from "./status.ts";
 import {
@@ -102,6 +103,10 @@ function CopiedNotice() {
       copied to clipboard
     </text>
   );
+}
+
+function retryFailureMessage(error: unknown): string {
+  return `retry failed: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 const FOCUS_BORDER = "#e5e7eb";
@@ -218,6 +223,8 @@ export function App() {
   const graphScrollRef = useRef<ScrollBoxRenderable>(null);
   const navigatingRef = useRef(model.navigating);
   navigatingRef.current = model.navigating;
+  const retryRef = useRef(model.retry);
+  retryRef.current = model.retry;
   const focusedId = focusedJob(model)?.id;
   const writeClipboard = useMemo(() => clipboardWriter(renderer), [renderer]);
   const [copiedNotice, setCopiedNotice] = useState(false);
@@ -462,6 +469,23 @@ export function App() {
     [model.graph],
   );
 
+  /** Run the retry gate, then restart through glab only if the gate allows it. */
+  const startRetry = (
+    job: JobNode,
+    onSuccess: (result: { jobId: string | null }) => void,
+  ) => {
+    dispatch({ type: "startRetry", job });
+    if (!isRetryableJob(job)) {
+      return;
+    }
+    retryRef.current = { jobId: job.numericId, screen: model.screen };
+    void retryJob(job.numericId)
+      .then(onSuccess)
+      .catch((error: unknown) =>
+        dispatch({ type: "retryFailed", message: retryFailureMessage(error) }),
+      );
+  };
+
   useKeyboard((key) => {
     if (isQuitKey(key.name)) {
       logProc.current?.kill();
@@ -476,7 +500,7 @@ export function App() {
       return;
     }
     if (model.screen === "list") {
-      if (key.name === "r" && navigatingRef.current === null && !model.manualRefresh) {
+      if (key.name === "r" && !key.ctrl && navigatingRef.current === null && !model.manualRefresh) {
         dispatch({ type: "manualRefresh", target: "list" });
         void listPipelines()
           .then((rows) => dispatch({ type: "pipelines", pipelines: rows }))
@@ -520,8 +544,25 @@ export function App() {
           );
       }
     }
-    if (model.screen === "graph" && stageGraph) {
-      if (model.graph && key.name === "r" && navigatingRef.current === null && !model.manualRefresh) {
+    if (model.screen === "graph" && stageGraph && model.graph) {
+      if (isRetryKey(key) && navigatingRef.current === null && retryRef.current === null) {
+        const job = focusedJob(model);
+        const iid = model.graph.iid;
+        if (job) {
+          startRetry(job, () => {
+            dispatch({ type: "retrySucceeded", jobId: null });
+            void fetchPipelineGraph(iid)
+              .then((graph) => dispatch({ type: "refreshGraph", graph }))
+              .catch((error: unknown) =>
+                dispatch({
+                  type: "refreshError",
+                  message: error instanceof Error ? error.message : String(error),
+                }),
+              );
+          });
+        }
+      }
+      if (model.graph && key.name === "r" && !key.ctrl && navigatingRef.current === null && !model.manualRefresh) {
         dispatch({ type: "manualRefresh", target: "graph" });
         void fetchPipelineGraph(model.graph.iid)
           .then((graph) => dispatch({ type: "refreshGraph", graph }))
@@ -565,6 +606,12 @@ export function App() {
     if (model.screen === "logs" && key.name === "y") {
       if (copyPlainText(model.logBuffer, writeClipboard)) {
         announceCopy();
+      }
+    }
+    if (model.screen === "logs" && model.graph && isRetryKey(key) && navigatingRef.current === null && retryRef.current === null) {
+      const job = tracedJob(model);
+      if (job) {
+        startRetry(job, ({ jobId }) => dispatch({ type: "retrySucceeded", jobId }));
       }
     }
     if (model.screen === "attempts" && model.graph) {
@@ -619,9 +666,16 @@ export function App() {
     return (
       <ScreenPanel
         title={`log ${job?.name ?? "job"}`}
-        keyHelp={`${model.logDone ? "ended" : "live"} · y yank · esc back`}
-        status={copiedNotice ? <CopiedNotice /> : undefined}
+        keyHelp={`${model.logDone ? "ended" : "live"} · ctrl+r retry · y yank · esc back`}
+        status={
+          model.retry ? (
+            <RefreshStatus label="retrying…" />
+          ) : copiedNotice ? (
+            <CopiedNotice />
+          ) : undefined
+        }
       >
+        {model.retryMessage ? <text fg="#eab308">{model.retryMessage}</text> : null}
         <scrollbox focused flexGrow={1} stickyScroll>
           <text>
             {model.logTrace.runs.length === 0
@@ -677,8 +731,14 @@ export function App() {
     return (
       <ScreenPanel
         title={`pipeline ${model.graph?.iid ?? ""}`}
-        keyHelp="arrows move  enter log  r refresh  esc list  q quit"
-        status={refreshing === "graph" ? <RefreshStatus label="refreshing…" /> : undefined}
+        keyHelp="arrows move  enter log  r refresh  ctrl+r retry  esc list  q quit"
+        status={
+          model.retry ? (
+            <RefreshStatus label="retrying…" />
+          ) : refreshing === "graph" ? (
+            <RefreshStatus label="refreshing…" />
+          ) : undefined
+        }
         loadingLabel={
           model.navigating?.kind === "logs"
             ? "Loading log…"
@@ -687,6 +747,7 @@ export function App() {
               : undefined
         }
       >
+        {model.retryMessage ? <text fg="#eab308">{model.retryMessage}</text> : null}
         {model.refreshWarning ? (
           <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
         ) : null}
