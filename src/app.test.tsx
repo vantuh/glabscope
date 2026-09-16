@@ -3326,3 +3326,40 @@ test("an obsolete graph failure is not reported as a refresh error", async () =>
     setup.renderer.destroy();
   }
 });
+
+test("a rate-limited tick while a confirmation waits cannot release it", async () => {
+  capturePollTimers();
+  graphGate.resolve(manualGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    const held = Promise.withResolvers<PipelineGraph>();
+    graphGate = held;
+    setup.mockInput.pressKey("r");
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitForFrame(setup, (f) => f.includes("enter confirm"), "run prompt");
+    setup.mockInput.pressEnter();
+    await waitForFrame(
+      setup,
+      (f) => f.includes("waiting for the refresh…"),
+      "held confirmation",
+    );
+
+    // The next poll is rate limited: that is not an answer, and it must neither
+    // release the wait nor add a notice for the operator to read.
+    graphScript = [new RateLimitedError("429 Too Many Requests")];
+    await Bun.sleep(60);
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("waiting for the refresh…");
+    expect(frame).not.toContain("refresh error");
+    expect(playCalls).toEqual([]);
+
+    // The refresh the operator asked for answers, and only then does the run start.
+    held.resolve(manualGraph());
+    await waitFor(() => playCalls.length === 1, "run after the answer");
+    expect(playCalls).toEqual(["99"]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});

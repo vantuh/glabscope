@@ -443,8 +443,9 @@ export function reduce(model: AppModel, action: Action): AppModel {
     }
     case "refreshError":
       // A failure leaves the graph in place, so a held confirmation keeps
-      // waiting for a newer answer: the operator can cancel it, and the graph
-      // keeps polling, so the wait always ends. Only the failing refresh's own
+      // waiting for a newer answer: the graph and the attempts list keep
+      // polling, so it ends there, and on the log screen, which does not poll,
+      // cancelling or leaving the screen ends it. Only the failing refresh's own
       // marker clears.
       return settleHeldConfirmation({
         ...model,

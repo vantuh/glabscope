@@ -589,12 +589,46 @@ test("a list outcome cannot take the graph refresh marker away", () => {
     expect(confirmed.retry).toBeNull();
   }
 
-  // And the graph's own answer clears only its marker.
-  const graphAnswered = reduce(
-    reduce(model, { type: "manualRefresh", target: "list" }),
-    { type: "refreshGraph", graph: graphWithFailedJob() },
-  );
-  expect(graphAnswered.manualRefresh).toBe("list");
+  // And the graph's own outcome clears only its marker: neither a graph answer
+  // nor a graph failure may take the list's refresh away.
+  const listRefreshing = reduce(model, { type: "manualRefresh", target: "list" });
+  expect(
+    reduce(listRefreshing, { type: "refreshGraph", graph: graphWithFailedJob() }).manualRefresh,
+  ).toBe("list");
+  expect(
+    reduce(listRefreshing, {
+      type: "refreshError",
+      target: "graph",
+      message: "graphql failed",
+    }).manualRefresh,
+  ).toBe("list");
+});
+
+test("a held confirmation on the log screen waits until it is cancelled", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "logsReady" });
+  expect(model.screen).toBe("logs");
+
+  model = reduce(model, { type: "manualRefresh", target: "graph" });
+  model = reduce(model, { type: "requestJobAction", job: retryableJob("lint", "10") });
+  const held = reduce(model, { type: "confirmJobAction" });
+  expect(held.confirm?.waiting).toBe(true);
+
+  // The log screen does not poll, so a failed refresh leaves the wait standing
+  // rather than starting anything.
+  const failed = reduce(held, {
+    type: "refreshError",
+    target: "graph",
+    message: "graphql failed",
+  });
+  expect(failed.confirm?.waiting).toBe(true);
+  expect(failed.retry).toBeNull();
+
+  // Cancelling ends it, and only then can the back action run.
+  const cancelled = reduce(failed, { type: "cancelJobAction" });
+  expect(cancelled.confirm).toBeNull();
+  expect(reduce(cancelled, { type: "back" }).screen).toBe("graph");
 });
 
 test("only a newer graph ends a held confirmation", () => {
