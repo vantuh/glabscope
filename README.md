@@ -6,11 +6,11 @@ Pick a pipeline from the repository you are standing in, walk its job dependency
 
 ## Features
 
-- **Pipeline list** for the current working tree: id, status, name, and age, with human names for branches, tags, and merge requests. Status is one of four buckets — success, failed, running-or-pending, other — carried by both color and icon.
+- **Pipeline list** for the current working tree: id, status, name, and age, with human names for branches, tags, and merge requests. Status color falls into four buckets — success, failed, running-or-pending, other — and each row shows a status icon beside the status word.
 - **Job dependency graph**: one card per job, grouped into stage columns, with arrows drawn from the `needs` GitLab actually reports (never invented from stage order). A retried job keeps a single card showing its latest attempt. Trigger and bridge jobs appear as ordinary cards.
 - **Attempts list** for a job that was retried, so you can open the log of any earlier attempt.
-- **Live job logs**: glabscope runs `glab ci trace` for the job, so you watch the same live trace glab prints, with GitLab's ANSI colors intact. When the job or the trace process ends, the captured buffer stays on screen until you leave.
-- **Job actions**: retry a failed or canceled job, or run a waiting manual job, from the graph, the attempts list, or a job's log. Each action asks for confirmation and re-checks the job's status before it reaches GitLab.
+- **Live job logs**: glabscope runs `glab ci trace` for the job, so you watch the same live trace glab prints, with GitLab's ANSI colors (standard, bright, and 256-color) intact. When the job or the trace process ends, the captured buffer stays on screen until you leave.
+- **Job actions**: retry a failed or canceled job from the graph, the attempts list, or a job's log, and run a waiting manual job from the graph. Each action asks for confirmation and re-checks the job's status before it reaches GitLab.
 - **Automatic refresh** that polls every few seconds while a pipeline is active and slows to a quiet watch interval once it is finished, backing off when GitLab rate-limits it. `r` forces a one-shot refresh on the list and the graph.
 
 ## Prerequisites
@@ -37,7 +37,7 @@ cd /path/to/your-gitlab-project
 bun /path/to/glabscope/src/index.tsx
 ```
 
-`bun start` (which runs `bun src/index.tsx`) is the same thing with the working directory left alone — it inspects the project of the directory you run it in, so run it from a checkout that has the GitLab remote you want.
+`bun start` works only inside the glabscope checkout, because that is where the script lives; it then inspects whatever GitLab project the checkout itself points at. Use the absolute entrypoint above when the project you want to inspect is somewhere else.
 
 Set `GLAB_BIN` if `glab` is not the binary on `PATH` that you want to use.
 
@@ -49,10 +49,10 @@ Set `GLAB_BIN` if `glab` is not the binary on `PATH` that you want to use.
 | Job graph | `←`/`↑`/`↓`/`→` move focus (`↑`/`↓` inside a stage, `←`/`→` across stages) · `enter` open the log, or the attempts list when the job has earlier attempts · `r` refresh · `ctrl+r` retry/run the focused job · `esc` back to the list |
 | Attempts | `↑`/`↓` move · `enter` open that attempt's log · `ctrl+r` retry the focused attempt · `esc` back to the graph |
 | Job log | drag with the mouse to copy the selection · `y` copy the whole captured log · `ctrl+r` retry the traced job · `esc` back (the chrome marks the trace `live` or `ended`) |
-| Confirmation prompt | `enter` confirm · `esc` cancel — other keys are ignored while it is open |
+| Confirmation prompt | `enter` confirm · `esc` cancel — every other key is ignored while it is open, except `q`, which still quits |
 | Any screen | `q` quit |
 
-`ctrl+r` acts only where it can: failed and canceled jobs can be retried, a waiting manual job can be run, and trigger or bridge jobs are left alone. The reason is shown on screen when the focused job does not qualify.
+`ctrl+r` acts only where it can: failed and canceled jobs can be retried, a waiting manual job can be run (from the graph), and trigger or bridge jobs are left alone. The reason is shown on screen when the focused job does not qualify.
 
 ## How it works
 
