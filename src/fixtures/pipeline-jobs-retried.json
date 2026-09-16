@@ -1,0 +1,98 @@
+{
+  "data": {
+    "project": {
+      "pipeline": {
+        "id": "gid://gitlab/Ci::Pipeline/1458633",
+        "iid": "19",
+        "status": "SUCCESS",
+        "stages": {
+          "nodes": [
+            {
+              "name": "build"
+            },
+            {
+              "name": "test"
+            },
+            {
+              "name": "deploy"
+            }
+          ]
+        },
+        "jobs": {
+          "pageInfo": {
+            "hasNextPage": false
+          },
+          "nodes": [
+            {
+              "id": "gid://gitlab/Ci::Build/47085801",
+              "name": "build",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "retried": false,
+              "stage": {
+                "name": "build"
+              },
+              "needs": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085810",
+              "name": "tests",
+              "status": "FAILED",
+              "kind": "BUILD",
+              "retried": true,
+              "stage": {
+                "name": "test"
+              },
+              "needs": {
+                "nodes": [
+                  {
+                    "id": "gid://gitlab/Ci::BuildNeed/901",
+                    "name": "build"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085812",
+              "name": "tests",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "retried": false,
+              "stage": {
+                "name": "test"
+              },
+              "needs": {
+                "nodes": [
+                  {
+                    "id": "gid://gitlab/Ci::BuildNeed/902",
+                    "name": "build"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "gid://gitlab/Ci::Build/47085830",
+              "name": "deploy",
+              "status": "SUCCESS",
+              "kind": "BUILD",
+              "retried": false,
+              "stage": {
+                "name": "deploy"
+              },
+              "needs": {
+                "nodes": [
+                  {
+                    "id": "gid://gitlab/Ci::BuildNeed/903",
+                    "name": "tests"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

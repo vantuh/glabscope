@@ -10,6 +10,13 @@ test("recorded query asks for jobs, stages, retried, status, and needs", () => {
   expect(PIPELINE_JOBS_QUERY).toContain("retried");
 });
 
+test("the jobs connection stays unfiltered so earlier attempts reach the attempts list", () => {
+  // A `retried:` argument would drop superseded attempts from the payload and
+  // leave the attempts list unreachable; the graph collapses them by name.
+  expect(PIPELINE_JOBS_QUERY).toContain("jobs(first: 100)");
+  expect(PIPELINE_JOBS_QUERY).not.toContain("retried:");
+});
+
 test("real payload includes job ids and at least one named need", () => {
   const jobs = fixture.data.project.pipeline.jobs.nodes;
   expect(jobs.length).toBeGreaterThan(0);

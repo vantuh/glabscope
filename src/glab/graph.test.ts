@@ -1,5 +1,6 @@
 import { expect, mock, spyOn, test } from "bun:test";
 import fixture from "../fixtures/pipeline-jobs-needs.json";
+import retriedFixture from "../fixtures/pipeline-jobs-retried.json";
 import missing from "../fixtures/needs-missing.json";
 import { fetchPipelineGraph, latestJobs, NeedsUnavailableError, parsePipelineGraph } from "./graph.ts";
 import { RateLimitedError } from "./ratelimit.ts";
@@ -104,6 +105,22 @@ test("latest attempt is the job with retried false, else the highest numeric id"
     },
   });
   expect(latestJobs(graph.jobs).map((job) => job.numericId)).toEqual(["12"]);
+});
+
+test("a retried-away attempt collapses to one node per job with its needs intact", () => {
+  const graph = parsePipelineGraph(retriedFixture);
+  // The payload keeps both attempts: the attempts list needs the older one.
+  expect(graph.jobs).toHaveLength(4);
+  expect(graph.jobs.filter((job) => job.name === "tests")).toHaveLength(2);
+
+  const visible = latestJobs(graph.jobs);
+  expect(visible.map((job) => job.name)).toEqual(["build", "tests", "deploy"]);
+  expect(new Set(visible.map((job) => `${job.stage}\0${job.name}`)).size).toBe(3);
+  const tests = visible.find((job) => job.name === "tests");
+  expect(tests?.numericId).toBe("47085812");
+  expect(tests?.status).toBe("SUCCESS");
+  expect(tests?.needsNames).toEqual(["build"]);
+  expect(visible.find((job) => job.name === "deploy")?.needsNames).toEqual(["tests"]);
 });
 
 test("a rate-limited graphql call is classified as a rate-limit error", async () => {
