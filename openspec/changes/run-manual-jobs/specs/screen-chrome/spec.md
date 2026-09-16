@@ -26,3 +26,36 @@ Each framed screen MUST show the keys that work on that screen in a dim help lin
 #### Scenario: Retry key pressed on a job that cannot be retried
 - **WHEN** the operator presses the retry key on a job that is neither failed or canceled nor a waiting manual job
 - **THEN** the reason is shown as a non-fatal message in the screen content, and the dim help line keeps listing that key
+
+## ADDED Requirements
+
+### Requirement: Confirm a job action before it starts
+Before the system starts or restarts a job at the operator's request, it MUST show a confirmation prompt for that action and that job and MUST NOT request anything from GitLab until the operator answers it. A job the key cannot act on MUST keep showing its non-fatal message instead of a prompt. The prompt MUST appear inside the framed content area of the screen that asked for it, above that screen's own content, which MUST stay visible behind it, and it MUST use the muted chrome color rather than any of the four status-bucket colors. The prompt MUST name the job and the action the operator is about to take, and MUST show the keys that answer it. Enter MUST confirm the prompt and Escape MUST cancel it; while the prompt is open those two keys answer it and every other key is ignored, except the quit key, which MUST still quit. Cancelling MUST choose nothing: the screen stays exactly as it was, no job action is recorded, and no message explains the cancellation. On confirmation the system MUST re-check the action against the job as it now stands in the pipeline and MUST refuse with that action's own non-fatal message when the job no longer qualifies, instead of starting it.
+
+#### Scenario: Prompt for a restart
+- **WHEN** the operator presses the retry key on a failed or canceled job
+- **THEN** the screen shows a prompt naming that job and the restart it would perform, with the screen's own content still visible behind it and no GitLab command started yet
+
+#### Scenario: Prompt for a run
+- **WHEN** the operator presses the retry key on a waiting manual job
+- **THEN** the screen shows a prompt naming that job and the run it would perform, with the screen's own content still visible behind it and no GitLab command started yet
+
+#### Scenario: Confirmed action
+- **WHEN** the operator confirms the prompt
+- **THEN** the prompt disappears and the named job action is requested exactly once
+
+#### Scenario: Cancelled action
+- **WHEN** the operator cancels the prompt
+- **THEN** no job action is requested, no message appears, and the screen is unchanged
+
+#### Scenario: Other keys while the prompt is open
+- **WHEN** the operator presses a movement, refresh, open, or back key while the prompt is open
+- **THEN** the prompt stays and nothing on the screen behind it changes
+
+#### Scenario: Quit while the prompt is open
+- **WHEN** the operator presses the quit key while the prompt is open
+- **THEN** the app quits
+
+#### Scenario: The job changed while the prompt was open
+- **WHEN** the pipeline state changes while the prompt is open so that the named job no longer qualifies for that action
+- **THEN** confirming starts nothing in GitLab and shows the same non-fatal message the key shows for a job it cannot act on

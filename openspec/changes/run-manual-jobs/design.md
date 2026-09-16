@@ -6,7 +6,8 @@ The retry action already provides everything a second job action needs, and this
 
 - `src/glab/retry.ts`: `retryArgv`, `parseRetriedJobId`, `isRetryableJob`, `retryJob` through `runGlab` (20 s timeout, nonzero exit → `Error`).
 - `src/model.ts`: the `retry` in-flight slot, `retryMessage` notice, `startRetry` / `retrySucceeded` / `retryFailed` actions, and `retryRefusalMessage`.
-- `src/app.tsx`: `isRetryKey`, the `retryRef` re-entry guard, `refreshGraphAfterRetry`, and the graph / attempts / logs key handlers.
+- `src/app.tsx`: `isRetryKey`, the `retryRef` re-entry guard, `refreshGraphAfterRetry`, the graph / attempts / logs key handlers, and the single `useKeyboard` handler that resolves `q` (quit) and `escape` (back) before the per-screen branches.
+- `src/app.tsx`'s `ScreenPanel` already hosts an absolutely positioned overlay inside the framed content box for the log-loading spinner (`LoadingOverlay`), which is the shape a confirmation prompt can reuse.
 - `src/glab/query.ts` + `src/glab/graph.ts`: the pipeline graph payload (`status`, `kind`, `retried`, `needs`).
 
 Facts established before writing this, against glab 1.117.0 and the operator's instance (`gitlab.foodtech.team`):
@@ -21,7 +22,8 @@ Facts established before writing this, against glab 1.117.0 and the operator's i
 **Goals:**
 
 - One key, two job actions, with the deciding policy in a single pure function that the reducer and the key handler share.
-- No change to the GraphQL query, the polling cadence rules, the attempts list, or the log screen.
+- Every action on every screen goes through one confirmation prompt and one start path, so no screen can start a GitLab job without the operator confirming it.
+- No change to the GraphQL query, the polling cadence rules, the attempts list, or the log screen beyond that confirmation.
 - The run path reuses retry's in-flight guard, immediate refresh, and focus reconciliation, so a run cannot corrupt retry's invariants.
 
 **Non-Goals:**
@@ -30,6 +32,7 @@ Facts established before writing this, against glab 1.117.0 and the operator's i
 - Manual job variables or inputs; `glab ci trigger` is called with the job id alone.
 - Running from the attempts list or the log screen.
 - Optimistically painting the card before the refresh returns.
+- Remembering a confirmation choice, so the prompt appears for every action.
 
 ## Decisions
 
@@ -71,6 +74,30 @@ A successful run dispatches `retrySucceeded` with the id the CLI printed and the
 
 `ctrl+r retry` becomes `ctrl+r retry/run` on the graph only; the attempts and log footers keep `ctrl+r retry`. This follows the existing convention that a key applying to only some jobs is still listed where it applies, and it keeps the help line independent of the focused job.
 
+**8. A job action is two steps: request a prompt, then confirm it.**
+
+The model gains a `confirm` slot holding `{ kind, jobId, name, screen }`, and the key press becomes:
+
+- `requestJobAction(job)` — refuse with the usual notice when the gate says no action applies, otherwise open the prompt. The gate is evaluated here, so a job the key cannot act on never shows a prompt.
+- `cancelJobAction` — clear the prompt. Nothing else changes: no message, no focus move, no trace restart, no state on the screen behind it.
+- `startRetry(job)` — today's action, unchanged in name, now dispatched only after the operator confirms; it re-runs the gate for that job and stores the kind it finds.
+
+Keeping `startRetry` as the name of the confirmed step holds the diff down: the existing reducer tests keep exercising the same action, and only the new prompt path is added around it. `retryFailed` also clears the prompt so a refusal can never leave a stale dialog on screen.
+
+The prompt state lives in the model rather than in component state so that "one action at a time" (`retry` or `confirm`, never both), the gate re-check and the messages are all testable through `reduce`, exactly like the in-flight slot today.
+
+**9. Confirming re-checks the action against the current pipeline.**
+
+`pendingJobAction(model)` returns the job the open prompt would act on, looked up by job id in the current graph and re-gated with `jobActionKind`. The reducer's confirm step resolves the prompt through that same helper, and the key handler calls it to decide whether to spawn a process at all, so the re-check exists once. A job that disappeared or no longer qualifies produces the non-fatal notice instead of a command: the graph keeps polling while the prompt is open, so a manual job another operator already started must not be played again, and GitLab answers a play on an enqueued job with its invalid-transition fallback, which would create a second attempt.
+
+**10. The prompt is an overlay inside the existing content box, and it owns the keyboard while it is open.**
+
+A `ConfirmPrompt` renders like `LoadingOverlay` — absolutely positioned inside `ScreenPanel`'s content box, above the screen's own content — but with two lines: the question (`retry job <name>?`, `run job <name>?`) and its keys (`enter confirm  esc cancel`), in the muted chrome color seen elsewhere. `ScreenPanel` gains an optional prompt node next to its existing `loadingLabel`, and the graph, attempts and log panels pass it from `model.confirm`.
+
+The prompt is not transient status, so it stays out of the chrome status area and the key-help line keeps listing the screen's own keys, which is what the screen-chrome requirement already demands.
+
+Key handling adds one branch ahead of the per-screen handlers and, importantly, ahead of the global `escape` → back branch: while a prompt is open, `enter` confirms and `escape` cancels, every other key is swallowed except `q`, which still quits because quitting changes no GitLab state and is handled first today.
+
 ## Risks / Trade-offs
 
 - [A manual bridge job would start a child pipeline instead of a job] → `isPlayableJob` rejects bridges, and the bridge branch of the refusal message names the reason.
@@ -79,6 +106,9 @@ A successful run dispatches `retrySucceeded` with the id the CLI printed and the
 - [A run leaves the card showing `manual` with a `running…` marker until the refresh lands] → same shape as a retry today, and the refresh follows the CLI answer immediately.
 - [The two-action refusal notice is long for a narrow terminal] → it is one short line in the graph body, and the retry-only screens keep the shorter wording.
 - [A status other than `manual` may look runnable to the operator on some instances] → the gate is one predicate; widening it later is a one-line change plus a spec delta.
+- [A confirmation prompt makes every retry slower, including the hurried "the flaky test failed again" case] → accepted by the operator's request: a stray `ctrl+r` must not start a GitLab job, and the prompt costs one `enter`.
+- [Escape now means "cancel the prompt" on the log and graph screens, where it used to mean back] → the prompt branch runs before the back branch, and a task verifies both meanings with a prompt open and closed.
+- [A prompt left open while polling changes the pipeline] → the re-check in decision 9 refuses the action with a message instead of starting a job that no longer qualifies.
 
 ## Migration Plan
 
