@@ -9,13 +9,16 @@ BIN="glabscope"
 ARTIFACT="$ROOT/dist/$BIN"
 ENTRY="$PREFIX/$BIN"
 
-# Drops our own entry when the build output it names cannot run, so a failed
-# build never leaves the command pointing at a missing binary. An entry still
-# pointing at an older but runnable build is left alone: it still works.
-drop_dangling_entry() {
-  if [ -L "$ENTRY" ] && [ "$(readlink "$ENTRY")" = "$ARTIFACT" ] && [ ! -x "$ARTIFACT" ]; then
-    rm "$ENTRY"
-    echo "$BIN: removed $ENTRY, which pointed at the missing $ARTIFACT." >&2
+# A failed build must not leave the entry running a binary this run did not
+# produce, so our own entry is removed rather than left stale or dangling. Only
+# a link that targets this project's artifact is ever touched.
+drop_our_entry() {
+  if [ -L "$ENTRY" ] && [ "$(readlink "$ENTRY")" = "$ARTIFACT" ]; then
+    if rm "$ENTRY"; then
+      echo "$BIN: removed $ENTRY: this build did not produce $ARTIFACT." >&2
+    else
+      echo "$BIN: could not remove $ENTRY; remove it by hand." >&2
+    fi
   fi
 }
 
@@ -43,14 +46,14 @@ fi
 echo "$BIN: building $ARTIFACT"
 if ! (cd "$ROOT" && bun run build); then
   echo "$BIN: build failed; nothing was installed." >&2
-  drop_dangling_entry
+  drop_our_entry
   exit 1
 fi
 
-if [ ! -x "$ARTIFACT" ]; then
-  echo "$BIN: the build run finished but $ARTIFACT is missing or not executable;" >&2
+if [ ! -f "$ARTIFACT" ] || [ ! -x "$ARTIFACT" ]; then
+  echo "$BIN: the build run finished but $ARTIFACT is not an executable file;" >&2
   echo "$BIN: nothing was installed." >&2
-  drop_dangling_entry
+  drop_our_entry
   exit 1
 fi
 
