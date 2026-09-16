@@ -16,10 +16,18 @@ import {
   type Screen,
 } from "./model.ts";
 import { IDLE_POLL_MS, NORMAL_POLL_MS, nextPollDelay } from "./polling.ts";
-import { isQuitKey, isRetryKey } from "./keys.ts";
+import { isOpenKey, isQuitKey, isRetryKey } from "./keys.ts";
 import { probeGlab } from "./glab/probe.ts";
 import { listPipelines } from "./glab/list.ts";
-import { fetchPipelineGraph, jobAttempts, NeedsUnavailableError, type JobNode } from "./glab/graph.ts";
+import {
+  fetchPipelineGraph,
+  jobAttempts,
+  NeedsUnavailableError,
+  projectInfo,
+  type JobNode,
+} from "./glab/graph.ts";
+import { openInBrowser } from "./browser.ts";
+import { jobWebUrl, pipelineWebUrl } from "./gitlab-url.ts";
 import { RateLimitedError } from "./glab/ratelimit.ts";
 import { spawnTrace } from "./glab/trace.ts";
 import { retryJob } from "./glab/retry.ts";
@@ -751,6 +759,47 @@ export function App() {
     );
   }, [model.retry]);
 
+  /**
+   * The open key mutates nothing in GitLab and never leaves the screen, so it
+   * is a plain handler side effect rather than committed model state: the
+   * project's web address comes from the already-cached `glab repo view`
+   * payload, the focused object's own URL is built from it, and the platform's
+   * default opener is started. One open is in flight at a time, so a repeated
+   * key while that address is still resolving starts no second page; only a
+   * failure to resolve the address or launch the opener becomes a notice.
+   */
+  const openInFlightRef = useRef(false);
+  const openTarget = (buildUrl: (webUrl: string) => string) => {
+    if (openInFlightRef.current) {
+      return;
+    }
+    openInFlightRef.current = true;
+    void (async () => {
+      try {
+        const project = await projectInfo();
+        if (!project.webUrl) {
+          dispatch({
+            type: "openFailed",
+            message: "cannot open in the browser: no project web URL",
+          });
+          return;
+        }
+        if (!openInBrowser(buildUrl(project.webUrl))) {
+          dispatch({ type: "openFailed", message: "the browser could not be launched" });
+        }
+      } catch (error) {
+        dispatch({
+          type: "openFailed",
+          message: `cannot open in the browser: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      } finally {
+        openInFlightRef.current = false;
+      }
+    })();
+  };
+
   useKeyboard((key) => {
     if (isQuitKey(key.name)) {
       logProc.current?.kill();
@@ -798,6 +847,12 @@ export function App() {
       if (key.name === "down") {
         dispatch({ type: "moveList", delta: 1 });
       }
+      if (isOpenKey(key)) {
+        const row = selectedPipeline(model);
+        if (row) {
+          openTarget((webUrl) => pipelineWebUrl(webUrl, String(row.id)));
+        }
+      }
       if (key.name === "return") {
         if (navigatingRef.current !== null) {
           return;
@@ -832,6 +887,18 @@ export function App() {
         const job = focusedJob(model);
         if (job) {
           askJobAction(job);
+        }
+      }
+      if (isOpenKey(key)) {
+        const job = focusedJob(model);
+        if (job) {
+          // A card with several attempts stands for none of them in
+          // particular, so nothing opens until the operator picks one.
+          if (jobAttempts(model.graph.jobs, job).length > 1) {
+            dispatch({ type: "openAttemptsForBrowser" });
+          } else {
+            openTarget((webUrl) => jobWebUrl(webUrl, job.numericId));
+          }
         }
       }
       if (model.graph && key.name === "r" && !key.ctrl && navigatingRef.current === null && !model.manualRefresh) {
@@ -881,6 +948,12 @@ export function App() {
         announceCopy();
       }
     }
+    if (model.screen === "logs" && model.logJobId && isOpenKey(key)) {
+      // The traced attempt, never the graph's focused card: an older attempt
+      // opens as itself, and one that dropped out of a refresh still opens.
+      const tracedId = model.logJobId;
+      openTarget((webUrl) => jobWebUrl(webUrl, tracedId));
+    }
     if (
       model.screen === "logs" &&
       model.graph &&
@@ -907,6 +980,12 @@ export function App() {
         const attempt = focusedAttempt(model);
         if (attempt) {
           askJobAction(attempt);
+        }
+      }
+      if (isOpenKey(key)) {
+        const attempt = focusedAttempt(model);
+        if (attempt) {
+          openTarget((webUrl) => jobWebUrl(webUrl, attempt.numericId));
         }
       }
       if (key.name === "up") {
@@ -958,7 +1037,7 @@ export function App() {
     return (
       <ScreenPanel
         title={`log ${job?.name ?? "job"}`}
-        keyHelp={`${model.logDone ? "ended" : "live"} · ctrl+r retry · y yank · esc back`}
+        keyHelp={`${model.logDone ? "ended" : "live"} · ctrl+r retry · o browser · y yank · esc back`}
         prompt={confirmPrompt(model)}
         status={
           model.retry ? (
@@ -996,7 +1075,7 @@ export function App() {
     return (
       <ScreenPanel
         title={`attempts ${card?.name ?? "job"}`}
-        keyHelp="enter log  ctrl+r retry  esc graph  q quit"
+        keyHelp="enter log  ctrl+r retry  o browser  esc graph  q quit"
         prompt={confirmPrompt(model)}
         status={
           model.retry ? (
@@ -1032,7 +1111,7 @@ export function App() {
     return (
       <ScreenPanel
         title={`pipeline ${model.graph?.iid ?? ""}`}
-        keyHelp="arrows move  enter log  r refresh  ctrl+r retry/run  esc list  q quit"
+        keyHelp="arrows move  enter log  r refresh  ctrl+r retry/run  o browser  esc list  q quit"
         prompt={confirmPrompt(model)}
         status={
           model.retry ? (
@@ -1076,7 +1155,7 @@ export function App() {
   return (
     <ScreenPanel
       title="pipelines"
-      keyHelp="enter graph  r refresh  q quit"
+      keyHelp="enter graph  r refresh  o browser  q quit"
       status={refreshing === "list" ? <RefreshStatus label="refreshing…" /> : undefined}
       loadingLabel={
         model.navigating?.kind === "graph"
@@ -1086,6 +1165,7 @@ export function App() {
             : undefined
       }
     >
+      {model.retryMessage ? <NoticeLine>{model.retryMessage}</NoticeLine> : null}
       {model.refreshWarning ? (
         <NoticeLine>refresh error: {model.refreshWarning} — retrying</NoticeLine>
       ) : null}
