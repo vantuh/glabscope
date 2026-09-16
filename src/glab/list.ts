@@ -9,6 +9,8 @@ export type PipelineRow = {
   bucket: StatusBucket;
   ref: string;
   source: string;
+  /** ISO creation timestamp; "" when glab reports none. */
+  createdAt: string;
 };
 
 type GlabPipelineJson = {
@@ -17,6 +19,7 @@ type GlabPipelineJson = {
   status: string;
   ref?: string;
   source?: string;
+  created_at?: string;
 };
 
 export function mapPipelines(raw: GlabPipelineJson[]): PipelineRow[] {
@@ -27,6 +30,7 @@ export function mapPipelines(raw: GlabPipelineJson[]): PipelineRow[] {
     bucket: statusBucket(pipeline.status),
     ref: pipeline.ref ?? "",
     source: pipeline.source ?? "",
+    createdAt: pipeline.created_at ?? "",
   }));
 }
 

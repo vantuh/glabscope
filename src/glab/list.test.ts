@@ -19,6 +19,21 @@ test("maps list JSON statuses into four buckets", () => {
   expect(rows[2]?.id).toBe(3);
 });
 
+test("carries the creation timestamp through, empty when glab reports none", () => {
+  const rows = mapPipelines([
+    {
+      id: 1,
+      iid: 10,
+      status: "success",
+      ref: "main",
+      created_at: "2026-09-16T09:12:34.085Z",
+    },
+    { id: 2, iid: 9, status: "failed", ref: "main" },
+  ]);
+  expect(rows[0]?.createdAt).toBe("2026-09-16T09:12:34.085Z");
+  expect(rows[1]?.createdAt).toBe("");
+});
+
 test("nonzero glab list is an error, not an empty success", async () => {
   const previous = process.env.GLAB_BIN;
   process.env.GLAB_BIN = "/usr/bin/false";

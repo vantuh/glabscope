@@ -1,6 +1,6 @@
 ## 1. List data
 
-- [ ] 1.1 Add `created_at?: string` to `GlabPipelineJson` and `createdAt: string` to `PipelineRow` in `src/glab/list.ts`, mapping it through with a `""` default, and verify with new `src/glab/list.test.ts` cases that a row carries `created_at` and that a pipeline without it yields `""` (`bun test src/glab/list.test.ts` green).
+- [x] 1.1 Add `created_at?: string` to `GlabPipelineJson` and `createdAt: string` to `PipelineRow` in `src/glab/list.ts`, mapping it through with a `""` default, and verify with new `src/glab/list.test.ts` cases that a row carries `created_at` and that a pipeline without it yields `""` (`bun test src/glab/list.test.ts` green).
 
 ## 2. Pure helpers
 

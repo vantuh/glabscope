@@ -14,6 +14,7 @@ function pipeline(id: number, iid: number, status = "success"): PipelineRow {
     bucket,
     ref: "main",
     source: "push",
+    createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
   };
 }
 

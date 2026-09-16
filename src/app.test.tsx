@@ -246,6 +246,7 @@ beforeEach(() => {
       bucket: "success",
       ref: "main",
       source: "push",
+      createdAt: recentCreatedAt(),
     },
   ];
   graphScript = [];
@@ -583,8 +584,12 @@ test("graph shows an animated loading line inside its frame before the log scree
 });
 
 
+function recentCreatedAt(): string {
+  return new Date(Date.now() - 5 * 60_000).toISOString();
+}
+
 function row(id: number, iid: number, bucket: PipelineRow["bucket"], status = "success"): PipelineRow {
-  return { id, iid, status, bucket, ref: "main", source: "push" };
+  return { id, iid, status, bucket, ref: "main", source: "push", createdAt: recentCreatedAt() };
 }
 
 function runningRow(id: number, iid: number): PipelineRow {
