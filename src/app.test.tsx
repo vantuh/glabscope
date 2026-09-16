@@ -5,6 +5,7 @@ import * as listModule from "./glab/list.ts";
 import * as graphModule from "./glab/graph.ts";
 import * as traceModule from "./glab/trace.ts";
 import * as retryModule from "./glab/retry.ts";
+import * as playModule from "./glab/play.ts";
 import * as clipboardModule from "./clipboard.ts";
 import { RateLimitedError } from "./glab/ratelimit.ts";
 import { IDLE_POLL_MS, NORMAL_POLL_MS } from "./polling.ts";
@@ -20,6 +21,9 @@ let procKills = 0;
 let retryCalls: string[] = [];
 let retryGate: PromiseWithResolvers<{ jobId: string | null }> | null = null;
 let retryError: string | null = null;
+let playCalls: string[] = [];
+let playGate: PromiseWithResolvers<{ jobId: string | null }> | null = null;
+let playError: string | null = null;
 let traceStaysLive = false;
 let traceStdout: Uint8Array | null = null;
 let traceStreams: QueuedTrace[] = [];
@@ -234,6 +238,9 @@ beforeEach(() => {
   retryCalls = [];
   retryGate = null;
   retryError = null;
+  playCalls = [];
+  playGate = null;
+  playError = null;
   traceStreams = [];
   traceStaysLive = false;
   traceStdout = null;
@@ -303,6 +310,13 @@ beforeEach(() => {
       return Promise.reject(new Error(retryError));
     }
     return retryGate ? retryGate.promise : Promise.resolve({ jobId: null });
+  });
+  spyOn(playModule, "playJob").mockImplementation((jobId: string) => {
+    playCalls.push(jobId);
+    if (playError) {
+      return Promise.reject(new Error(playError));
+    }
+    return playGate ? playGate.promise : Promise.resolve({ jobId: null });
   });
 });
 
@@ -629,6 +643,17 @@ function graphFor(status: string, jobs: PipelineGraph["jobs"]): PipelineGraph {
     stageNames: [...new Set(jobs.map((job) => job.stage).filter(Boolean))],
     truncated: false,
   };
+}
+
+/**
+ * Press the retry key and answer its confirmation prompt the way the operator
+ * does: the prompt is a separate render, so the confirming key arrives after
+ * the screen has redrawn with it open.
+ */
+async function askAndConfirm(setup: Awaited<ReturnType<typeof testRender>>) {
+  setup.mockInput.pressKey("r", { ctrl: true });
+  await waitForFrame(setup, (frame) => frame.includes("enter confirm"), "confirmation prompt");
+  setup.mockInput.pressEnter();
 }
 
 async function waitFor(predicate: () => boolean, label: string) {
@@ -1071,7 +1096,7 @@ test("the graph chrome keeps its long key help intact with the spinner pinned ri
       (frame) => frame.includes("refreshing…") && /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(frame),
       "in-flight graph refresh",
     );
-    const help = "arrows move  enter log  r refresh  ctrl+r retry  esc list  q quit";
+    const help = "arrows move  enter log  r refresh  ctrl+r retry/run  esc list  q quit";
     const { text } = chromeRow(frame, "arrows move");
     // At a realistic terminal width the longest help line survives whole and
     // the status still sits at the far right of the same row.
@@ -1796,7 +1821,7 @@ test("ctrl+r retries the focused failed job and keeps the graph on it", async ()
     const callsBefore = fetchGraphCalls.length;
 
     retryGate = Promise.withResolvers();
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     await waitFor(() => retryCalls.length === 1, "retry call");
     expect(retryCalls).toEqual(["10"]);
     await waitForFrame(setup, (frame) => frame.includes("retrying…"), "in-flight retry mark");
@@ -1840,7 +1865,10 @@ test("ctrl+r on a job that cannot be retried contacts no GitLab and explains why
     setup.mockInput.pressKey("r", { ctrl: true });
     const frame = await waitForFrame(
       setup,
-      (frame) => frame.includes("only failed or canceled jobs can be retried"),
+      (frame) =>
+        frame.includes(
+          "only failed or canceled jobs can be retried, and only waiting manual jobs can be run",
+        ),
       "retry refusal",
     );
     expect(retryCalls).toEqual([]);
@@ -1868,7 +1896,7 @@ test("ctrl+r on a trigger job refuses in its own words", async () => {
     setup.mockInput.pressKey("r", { ctrl: true });
     const frame = await waitForFrame(
       setup,
-      (frame) => frame.includes("this job cannot be retried here"),
+      (frame) => frame.includes("this job cannot be restarted here"),
       "bridge refusal",
     );
     expect(retryCalls).toEqual([]);
@@ -1884,7 +1912,7 @@ test("a repeated ctrl+r while a retry is in flight makes one call", async () => 
   try {
     await openFailedGraph(setup);
     retryGate = Promise.withResolvers();
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     await waitFor(() => retryCalls.length === 1, "first retry");
     await waitForFrame(setup, (frame) => frame.includes("retrying…"), "in-flight retry mark");
     setup.mockInput.pressKey("r", { ctrl: true });
@@ -1908,7 +1936,7 @@ test("a refused retry keeps the graph navigable with the reason", async () => {
   try {
     await openFailedGraph(setup);
     retryError = "job is not retryable";
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     const frame = await waitForFrame(
       setup,
       (frame) => frame.includes("retry failed: job is not retryable"),
@@ -1936,12 +1964,12 @@ test("the graph chrome carries the retry key with the other keys", async () => {
   try {
     await openFailedGraph(setup);
     const frame = setup.captureCharFrame();
-    const help = "arrows move  enter log  r refresh  ctrl+r retry  esc list  q quit";
-    const { row, text } = chromeRow(frame, "ctrl+r retry");
+    const help = "arrows move  enter log  r refresh  ctrl+r retry/run  esc list  q quit";
+    const { row, text } = chromeRow(frame, "ctrl+r retry/run");
     expect(text.startsWith(help)).toBe(true);
     expect(row).toContain(help);
     // Chrome only: the key never leaks into the graph body.
-    expect(frame.split("\n").filter((line) => line.includes("ctrl+r retry"))).toHaveLength(1);
+    expect(frame.split("\n").filter((line) => line.includes("ctrl+r retry/run"))).toHaveLength(1);
   } finally {
     setup.renderer.destroy();
   }
@@ -1972,7 +2000,7 @@ test("ctrl+r on the log restarts the traced job and streams the new attempt", as
     traceStreams.push(newTrace);
     const killsBefore = procKills;
     retryGate = Promise.withResolvers();
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     await waitFor(() => retryCalls.length === 1, "retry call");
     expect(retryCalls).toEqual(["99"]);
     await waitForFrame(setup, (frame) => frame.includes("retrying…"), "in-flight retry mark");
@@ -2014,7 +2042,7 @@ test("a chunk from the replaced attempt cannot land in the restarted log", async
     traceStreams.push(newTrace);
     const killsBefore = procKills;
     retryGate = Promise.withResolvers();
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     await waitFor(() => retryCalls.length === 1, "retry call");
     retryGate.resolve({ jobId: "101" });
     await waitFor(() => spawnJobIds.length === 2, "trace for the new attempt");
@@ -2046,7 +2074,7 @@ test("a retry from a log tracing an attempt the graph has not seen is refused", 
     await waitForFrame(setup, (frame) => frame.includes("boom"), "log screen");
 
     retryGate = Promise.withResolvers();
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     await waitFor(() => retryCalls.length === 1, "retry call");
     traceStdout = new TextEncoder().encode("new attempt\n");
     // The post-retry refresh returns a graph that does not carry the new
@@ -2081,7 +2109,7 @@ test("a spawn failure while replacing the trace returns to the graph", async () 
 
     spawnFailFromCall = 2;
     retryGate = Promise.withResolvers();
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     await waitFor(() => retryCalls.length === 1, "retry call");
     retryGate.resolve({ jobId: "101" });
 
@@ -2128,7 +2156,7 @@ test("a GitLab-refused retry from the log keeps the visible output", async () =>
     await waitForFrame(setup, (frame) => frame.includes("boom"), "log screen");
 
     retryError = "job is not retryable";
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     const frame = await waitForFrame(
       setup,
       (frame) => frame.includes("retry failed: job is not retryable"),
@@ -2152,7 +2180,7 @@ test("a log retry whose new id cannot be read returns to the graph with a messag
     await waitForFrame(setup, (frame) => frame.includes("boom"), "log screen");
 
     retryGate = Promise.withResolvers();
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     await waitFor(() => retryCalls.length === 1, "retry call");
     retryGate.resolve({ jobId: null });
 
@@ -2223,7 +2251,7 @@ test("ctrl+r on the attempts list restarts the focused attempt and follows it", 
     const callsBefore = fetchGraphCalls.length;
 
     retryGate = Promise.withResolvers();
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     await waitFor(() => retryCalls.length === 1, "retry call");
     expect(retryCalls).toEqual(["12"]);
     await waitForFrame(setup, (frame) => frame.includes("retrying…"), "in-flight retry mark");
@@ -2286,7 +2314,7 @@ test("a refused attempt retry keeps the rows navigable with the reason", async (
   try {
     await openAttempts(setup);
     retryError = "job is not retryable";
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     const frame = await waitForFrame(
       setup,
       (frame) => frame.includes("retry failed: job is not retryable"),
@@ -2393,7 +2421,7 @@ test("a retry landing after another job's log was opened leaves it alone", async
     await waitForFrame(setup, (frame) => frame.includes("lint output"), "lint chunk");
 
     retryGate = Promise.withResolvers();
-    setup.mockInput.pressKey("r", { ctrl: true });
+    await askAndConfirm(setup);
     await waitFor(() => retryCalls.length === 1, "retry call");
     expect(retryCalls).toEqual(["10"]);
 
@@ -2569,6 +2597,271 @@ test("a retry notice and a refresh warning keep their own rows on the graph", as
       true,
     );
   } finally {
+    setup.renderer.destroy();
+  }
+});
+
+/** A graph whose only job waits for a manual action. */
+function manualGraph(name = "deploy", numericId = "99"): PipelineGraph {
+  return graphFor("MANUAL", [{ ...jobIn(name, numericId, "manual"), stage: "deploy" }]);
+}
+
+test("the confirmation prompt asks before a retry and names the job", async () => {
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    setup.mockInput.pressKey("r", { ctrl: true });
+    const frame = await waitForFrame(
+      setup,
+      (f) => f.includes("enter confirm  esc cancel"),
+      "confirmation prompt",
+    );
+    expect(frame).toContain("retry job build?");
+    // The screen behind the prompt is still the graph, card and all.
+    expect(frame).toContain("pipeline 5");
+    expect(retryCalls).toEqual([]);
+
+    setup.mockInput.pressEnter();
+    await waitFor(() => retryCalls.length === 1, "confirmed retry");
+    expect(retryCalls).toEqual(["99"]);
+    const confirmed = await waitForFrame(
+      setup,
+      (f) => !f.includes("enter confirm"),
+      "prompt gone after the confirmation",
+    );
+    expect(confirmed).toContain("pipeline 5");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("cancelling the prompt asks nothing, says nothing and stays put", async () => {
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitForFrame(setup, (f) => f.includes("enter confirm"), "confirmation prompt");
+    setup.mockInput.pressEscape();
+    const frame = await waitForFrame(
+      setup,
+      (f) => !f.includes("enter confirm") && focusedCard(f, statusIcon("failed"), "build"),
+      "graph without the prompt",
+    );
+    expect(frame).not.toContain("retry job");
+    expect(frame).not.toContain("only failed or canceled");
+    expect(frame).toContain("pipeline 5");
+    expect(retryCalls).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("movement and refresh keys do nothing while the prompt is open", async () => {
+  capturePollTimers();
+  graphGate.resolve(
+    graphFor("FAILED", [
+      { ...jobIn("lint", "10", "failed"), stage: "test" },
+      jobIn("build", "11", "success"),
+    ]),
+  );
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    await waitForFrame(setup, (f) => focusedCard(f, statusIcon("failed"), "lint"), "lint focused");
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitForFrame(setup, (f) => f.includes("retry job lint?"), "confirmation prompt");
+    const callsBefore = fetchGraphCalls.length;
+
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    setup.mockInput.pressKey("r");
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("retry job lint?");
+    expect(frame).toContain("enter confirm  esc cancel");
+    expect(focusedCard(frame, statusIcon("failed"), "lint")).toBe(true);
+    expect(frame).not.toContain("only failed or canceled");
+    expect(fetchGraphCalls.length).toBe(callsBefore);
+    expect(retryCalls).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("the run prompt asks before a waiting manual job is started", async () => {
+  graphGate.resolve(manualGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    setup.mockInput.pressKey("r", { ctrl: true });
+    const frame = await waitForFrame(setup, (f) => f.includes("enter confirm"), "run prompt");
+    expect(frame).toContain("run job deploy?");
+    expect(playCalls).toEqual([]);
+    expect(retryCalls).toEqual([]);
+
+    playGate = Promise.withResolvers();
+    setup.mockInput.pressEnter();
+    await waitFor(() => playCalls.length === 1, "run call");
+    expect(playCalls).toEqual(["99"]);
+    await waitForFrame(setup, (f) => f.includes("running…"), "in-flight run mark");
+
+    graphScript = [graphFor("RUNNING", [{ ...jobIn("deploy", "99", "pending"), stage: "deploy" }])];
+    playGate.resolve({ jobId: "99" });
+    const done = await waitForFrame(
+      setup,
+      (f) => focusedCard(f, statusIcon("pending"), "deploy"),
+      "the same card turned running-or-pending",
+    );
+    expect(done).not.toContain("running…");
+    expect(done).not.toContain("retrying…");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a repeated press while a run is in flight makes one call", async () => {
+  graphGate.resolve(manualGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    playGate = Promise.withResolvers();
+    await askAndConfirm(setup);
+    await waitFor(() => playCalls.length === 1, "first run");
+    await waitForFrame(setup, (f) => f.includes("running…"), "in-flight run mark");
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await Bun.sleep(20);
+    await setup.renderOnce();
+    expect(playCalls).toEqual(["99"]);
+  } finally {
+    playGate?.resolve({ jobId: null });
+    setup.renderer.destroy();
+  }
+});
+
+test("a rejected run keeps the graph navigable with the reason", async () => {
+  graphGate.resolve(manualGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    playError = "Could not trigger job with ID: 99";
+    await askAndConfirm(setup);
+    const frame = await waitForFrame(
+      setup,
+      (f) => f.includes("run failed: Could not trigger job with ID: 99"),
+      "run failure message",
+    );
+    expect(playCalls).toEqual(["99"]);
+    expect(frame).toContain("deploy");
+    expect(frame).not.toContain("running…");
+
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    await waitForFrame(setup, (f) => f.includes("pipeline 5"), "graph still navigable");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a waiting manual job is never run from its log", async () => {
+  graphGate.resolve(manualGraph());
+  const setup = await testRender(<App />, { width: 80, height: 14 });
+  try {
+    await openFailedGraph(setup);
+    traceStdout = new TextEncoder().encode("waiting\n");
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (f) => f.includes("log deploy"), "log screen");
+
+    setup.mockInput.pressKey("r", { ctrl: true });
+    const frame = await waitForFrame(
+      setup,
+      (f) => f.includes("only failed or canceled jobs can be retried"),
+      "run refusal on the log",
+    );
+    expect(frame).not.toContain("enter confirm");
+    expect(frame).not.toContain("and only waiting manual jobs can be run");
+    expect(playCalls).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("the log screen asks before it restarts the traced job", async () => {
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 80, height: 14 });
+  try {
+    await openFailedGraph(setup);
+    const trace = queuedTrace();
+    traceStreams.push(trace);
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (f) => f.includes("log build"), "log screen");
+    trace.write("boom\n");
+    await waitForFrame(setup, (f) => f.includes("boom"), "log body");
+
+    setup.mockInput.pressKey("r", { ctrl: true });
+    const asked = await waitForFrame(setup, (f) => f.includes("enter confirm"), "log prompt");
+    expect(asked).toContain("retry job build?");
+    expect(asked).toContain("boom");
+    expect(retryCalls).toEqual([]);
+
+    // The trace keeps streaming while the prompt is open.
+    trace.write("still streaming\n");
+    await waitForFrame(
+      setup,
+      (f) => f.includes("still streaming") && f.includes("enter confirm"),
+      "chunk while the prompt is open",
+    );
+
+    setup.mockInput.pressEscape();
+    await waitForFrame(
+      setup,
+      (f) => !f.includes("enter confirm") && f.includes("still streaming"),
+      "log without the prompt",
+    );
+    expect(retryCalls).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("the attempts screen asks before it restarts the focused attempt", async () => {
+  graphGate.resolve(retriedAttemptsGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openAttempts(setup);
+    setup.mockInput.pressKey("r", { ctrl: true });
+    const frame = await waitForFrame(setup, (f) => f.includes("enter confirm"), "attempts prompt");
+    expect(frame).toContain("retry job lint?");
+    expect(frame).toContain("#12");
+    expect(retryCalls).toEqual([]);
+
+    setup.mockInput.pressEnter();
+    await waitFor(() => retryCalls.length === 1, "attempt retry");
+    expect(retryCalls).toEqual(["12"]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("quit still quits while a prompt is open", async () => {
+  let exited = false;
+  const originalExit = process.exit;
+  process.exit = ((code?: number) => {
+    exited = true;
+    void code;
+  }) as typeof process.exit;
+
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitForFrame(setup, (f) => f.includes("enter confirm"), "confirmation prompt");
+    setup.mockInput.pressKey("q");
+    await setup.renderOnce();
+    expect(exited).toBe(true);
+    expect(retryCalls).toEqual([]);
+  } finally {
+    process.exit = originalExit;
     setup.renderer.destroy();
   }
 });

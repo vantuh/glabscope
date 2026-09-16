@@ -5,11 +5,15 @@ import {
   emptyModel,
   focusedAttempt,
   focusedJob,
+  pendingJobAction,
   reduce,
   selectedPipeline,
   shouldPollGraph,
   shouldPollList,
   tracedJob,
+  type AppModel,
+  type JobActionKind,
+  type Screen,
 } from "./model.ts";
 import { IDLE_POLL_MS, NORMAL_POLL_MS, nextPollDelay } from "./polling.ts";
 import { isQuitKey, isRetryKey } from "./keys.ts";
@@ -18,7 +22,8 @@ import { listPipelines } from "./glab/list.ts";
 import { fetchPipelineGraph, jobAttempts, NeedsUnavailableError, type JobNode } from "./glab/graph.ts";
 import { RateLimitedError } from "./glab/ratelimit.ts";
 import { spawnTrace } from "./glab/trace.ts";
-import { isRetryableJob, retryJob } from "./glab/retry.ts";
+import { retryJob } from "./glab/retry.ts";
+import { playJob } from "./glab/play.ts";
 import { clipboardWriter, copyPlainText } from "./clipboard.ts";
 import { BUCKET_COLOR, isActivePipelineStatus, statusIcon } from "./status.ts";
 import { headerLine, listCells, listColumns, pipelineCells } from "./list-layout.ts";
@@ -51,12 +56,15 @@ export function ScreenPanel({
   keyHelp,
   status,
   loadingLabel,
+  prompt,
   children,
 }: {
   title: string;
   keyHelp: string;
   status?: ReactNode;
   loadingLabel?: string;
+  /** The question of an open confirmation, over the panel's own content. */
+  prompt?: string;
   children: ReactNode;
 }) {
   return (
@@ -72,6 +80,7 @@ export function ScreenPanel({
       >
         <box position="relative" flexDirection="column" flexGrow={1}>
           {children}
+          {prompt ? <ConfirmPrompt question={prompt} /> : null}
           {loadingLabel ? <LoadingOverlay label={loadingLabel} /> : null}
         </box>
         {keyHelp ? (
@@ -128,8 +137,24 @@ function NoticeLine({ children }: { children: ReactNode }) {
   );
 }
 
-function retryFailureMessage(error: unknown): string {
-  return `retry failed: ${error instanceof Error ? error.message : String(error)}`;
+/**
+ * The wording of the in-flight status area, per job action, and the prefix a
+ * failed action reports with.
+ */
+const ACTION_LABEL: Record<JobActionKind, string> = {
+  retry: "retrying…",
+  play: "running…",
+};
+
+function jobActionFailureMessage(kind: JobActionKind, error: unknown): string {
+  const action = kind === "play" ? "run" : "retry";
+  return `${action} failed: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+/** `retry job lint?` / `run job lint?`: what the operator is about to do. */
+function confirmQuestion(model: AppModel): string {
+  const action = model.confirm?.kind === "play" ? "run" : "retry";
+  return `${action} job ${model.confirm?.name}?`;
 }
 
 const FOCUS_BORDER = "#e5e7eb";
@@ -260,6 +285,43 @@ function LoadingOverlay({ label }: { label: string }) {
       <text fg="#60a5fa">
         {SPINNER_FRAMES[frame]} {label}
       </text>
+    </box>
+  );
+}
+
+/**
+ * A job action is confirmed before anything reaches GitLab. The prompt sits in
+ * the framed content area, over the screen that asked, in chrome colors only so
+ * the status-bucket colors keep their meaning.
+ */
+function ConfirmPrompt({ question }: { question: string }) {
+  return (
+    <box
+      position="absolute"
+      top={0}
+      left={0}
+      width="100%"
+      height="100%"
+      zIndex={100}
+      backgroundColor="#111827cc"
+      alignItems="center"
+      justifyContent="center"
+    >
+      <box
+        border
+        borderStyle="rounded"
+        borderColor={CHROME_COLOR}
+        flexDirection="column"
+        paddingLeft={1}
+        paddingRight={1}
+      >
+        <text fg={HELP_COLOR} selectable={false}>
+          {question}
+        </text>
+        <text fg={CHROME_COLOR} selectable={false}>
+          enter confirm  esc cancel
+        </text>
+      </box>
     </box>
   );
 }
@@ -549,28 +611,58 @@ export function App() {
     );
   };
 
-  /** Run the retry gate, then restart through glab only if the gate allows it. */
-  const startRetry = (
-    job: JobNode,
+  /**
+   * Spawn the action the operator confirmed: a retry restarts a job, a run
+   * starts a waiting manual one. Only ever called from a confirmed prompt, so
+   * nothing reaches GitLab before the operator answered it.
+   */
+  const startJobAction = (
+    { job, kind }: { job: JobNode; kind: JobActionKind },
     onSuccess: (result: { jobId: string | null }) => void,
   ) => {
-    dispatch({ type: "startRetry", job });
-    if (!isRetryableJob(job)) {
-      return;
-    }
-    retryRef.current = { jobId: job.numericId, screen: model.screen };
-    void retryJob(job.numericId)
+    retryRef.current = { jobId: job.numericId, screen: model.screen, kind };
+    const action = kind === "play" ? playJob(job.numericId) : retryJob(job.numericId);
+    void action
       .then(onSuccess)
       .catch((error: unknown) =>
-        dispatch({ type: "retryFailed", message: retryFailureMessage(error) }),
+        dispatch({ type: "retryFailed", message: jobActionFailureMessage(kind, error) }),
       );
   };
+
+  /**
+   * Settle a finished action. A log screen that cannot follow the new attempt
+   * returns to the graph itself, so only an action that produced an attempt
+   * needs the extra fetch.
+   */
+  const settleJobAction =
+    (screen: Screen) =>
+    ({ jobId }: { jobId: string | null }) => {
+      dispatch({ type: "retrySucceeded", jobId });
+      const iid = model.graph?.iid;
+      if (iid && (screen !== "logs" || jobId)) {
+        refreshGraphAfterRetry(iid);
+      }
+    };
 
   useKeyboard((key) => {
     if (isQuitKey(key.name)) {
       logProc.current?.kill();
       renderer.destroy();
       process.exit(0);
+    }
+    // An open confirmation owns the keyboard: nothing behind it may move, and
+    // escape answers the prompt instead of going back a screen.
+    if (model.confirm) {
+      if (key.name === "return") {
+        const resolved = pendingJobAction(model);
+        dispatch({ type: "confirmJobAction" });
+        if (resolved) {
+          startJobAction(resolved, settleJobAction(model.screen));
+        }
+      } else if (key.name === "escape") {
+        dispatch({ type: "cancelJobAction" });
+      }
+      return;
     }
     if (key.name === "escape") {
       dispatch({ type: "back" });
@@ -629,12 +721,8 @@ export function App() {
     if (model.screen === "graph" && stageGraph && model.graph) {
       if (isRetryKey(key) && navigatingRef.current === null && retryRef.current === null) {
         const job = focusedJob(model);
-        const iid = model.graph.iid;
         if (job) {
-          startRetry(job, ({ jobId }) => {
-            dispatch({ type: "retrySucceeded", jobId });
-            refreshGraphAfterRetry(iid);
-          });
+          dispatch({ type: "requestJobAction", job });
         }
       }
       if (model.graph && key.name === "r" && !key.ctrl && navigatingRef.current === null && !model.manualRefresh) {
@@ -693,15 +781,7 @@ export function App() {
       // to whatever the stale graph still focuses would retry the attempt that
       // was just replaced.
       if (traced && traced.numericId === model.logJobId) {
-        const iid = model.graph.iid;
-        startRetry(traced, ({ jobId }) => {
-          dispatch({ type: "retrySucceeded", jobId });
-          if (jobId) {
-            // Learn the new attempt's status, so the next press is gated on it
-            // rather than on the attempt it replaced.
-            refreshGraphAfterRetry(iid);
-          }
-        });
+        dispatch({ type: "requestJobAction", job: traced });
       } else {
         dispatch({
           type: "retryFailed",
@@ -715,11 +795,7 @@ export function App() {
       if (isRetryKey(key) && navigatingRef.current === null && retryRef.current === null) {
         const attempt = focusedAttempt(model);
         if (attempt) {
-          const iid = model.graph.iid;
-          startRetry(attempt, ({ jobId }) => {
-            dispatch({ type: "retrySucceeded", jobId });
-            refreshGraphAfterRetry(iid);
-          });
+          dispatch({ type: "requestJobAction", job: attempt });
         }
       }
       if (key.name === "up") {
@@ -772,9 +848,10 @@ export function App() {
       <ScreenPanel
         title={`log ${job?.name ?? "job"}`}
         keyHelp={`${model.logDone ? "ended" : "live"} · ctrl+r retry · y yank · esc back`}
+        prompt={model.confirm ? confirmQuestion(model) : undefined}
         status={
           model.retry ? (
-            <RefreshStatus label="retrying…" />
+            <RefreshStatus label={ACTION_LABEL[model.retry.kind]} />
           ) : copiedNotice ? (
             <CopiedNotice />
           ) : undefined
@@ -809,9 +886,10 @@ export function App() {
       <ScreenPanel
         title={`attempts ${card?.name ?? "job"}`}
         keyHelp="enter log  ctrl+r retry  esc graph  q quit"
+        prompt={model.confirm ? confirmQuestion(model) : undefined}
         status={
           model.retry ? (
-            <RefreshStatus label="retrying…" />
+            <RefreshStatus label={ACTION_LABEL[model.retry.kind]} />
           ) : refreshing === "graph" ? (
             <RefreshStatus label="refreshing…" />
           ) : undefined
@@ -843,10 +921,11 @@ export function App() {
     return (
       <ScreenPanel
         title={`pipeline ${model.graph?.iid ?? ""}`}
-        keyHelp="arrows move  enter log  r refresh  ctrl+r retry  esc list  q quit"
+        keyHelp="arrows move  enter log  r refresh  ctrl+r retry/run  esc list  q quit"
+        prompt={model.confirm ? confirmQuestion(model) : undefined}
         status={
           model.retry ? (
-            <RefreshStatus label="retrying…" />
+            <RefreshStatus label={ACTION_LABEL[model.retry.kind]} />
           ) : refreshing === "graph" ? (
             <RefreshStatus label="refreshing…" />
           ) : undefined

@@ -76,19 +76,19 @@ A successful run dispatches `retrySucceeded` with the id the CLI printed and the
 
 **8. A job action is two steps: request a prompt, then confirm it.**
 
-The model gains a `confirm` slot holding `{ kind, jobId, name, screen }`, and the key press becomes:
+The model gains a `confirm` slot holding `{ kind, jobId, name }` (the screen cannot change while the prompt owns the keyboard, so it is not stored), and the key press becomes three steps:
 
 - `requestJobAction(job)` — refuse with the usual notice when the gate says no action applies, otherwise open the prompt. The gate is evaluated here, so a job the key cannot act on never shows a prompt.
 - `cancelJobAction` — clear the prompt. Nothing else changes: no message, no focus move, no trace restart, no state on the screen behind it.
-- `startRetry(job)` — today's action, unchanged in name, now dispatched only after the operator confirms; it re-runs the gate for that job and stores the kind it finds.
+- `confirmJobAction` — resolve the prompt through `pendingJobAction`, then either record the in-flight action with its kind or replace the prompt with the reason it cannot be honoured. The reducer owns both state and message; the key handler only asks `pendingJobAction` whether to spawn a process, so the two can never disagree about the gate.
 
-Keeping `startRetry` as the name of the confirmed step holds the diff down: the existing reducer tests keep exercising the same action, and only the new prompt path is added around it. `retryFailed` also clears the prompt so a refusal can never leave a stale dialog on screen.
+This replaced an earlier plan to keep `startRetry` as the confirmed step: with the prompt owning the gate, the confirmed step had to decide refusals too, and a payload-free action keeps the message in the reducer. `retryFailed` and the log-screen fallback also clear the prompt so a refusal can never leave a stale dialog on screen.
 
 The prompt state lives in the model rather than in component state so that "one action at a time" (`retry` or `confirm`, never both), the gate re-check and the messages are all testable through `reduce`, exactly like the in-flight slot today.
 
 **9. Confirming re-checks the action against the current pipeline.**
 
-`pendingJobAction(model)` returns the job the open prompt would act on, looked up by job id in the current graph and re-gated with `jobActionKind`. The reducer's confirm step resolves the prompt through that same helper, and the key handler calls it to decide whether to spawn a process at all, so the re-check exists once. A job that disappeared or no longer qualifies produces the non-fatal notice instead of a command: the graph keeps polling while the prompt is open, so a manual job another operator already started must not be played again, and GitLab answers a play on an enqueued job with its invalid-transition fallback, which would create a second attempt.
+`pendingJobAction(model)` returns the job the open prompt would act on, looked up by job id in the current graph and re-gated with `jobActionKind`. The reducer's confirm step resolves the prompt through that same helper, and the key handler calls it to decide whether to spawn a process at all, so the re-check exists once. A job that disappeared or no longer qualifies produces a non-fatal notice instead of a command: the action's own refusal message while the job is still in the graph, or `that job is no longer in this pipeline` when a refresh dropped it. The graph keeps polling while the prompt is open, so a manual job another operator already started must not be played again, and GitLab answers a play on an enqueued job with its invalid-transition fallback, which would create a second attempt.
 
 **10. The prompt is an overlay inside the existing content box, and it owns the keyboard while it is open.**
 

@@ -30,7 +30,7 @@ Each framed screen MUST show the keys that work on that screen in a dim help lin
 ## ADDED Requirements
 
 ### Requirement: Confirm a job action before it starts
-Before the system starts or restarts a job at the operator's request, it MUST show a confirmation prompt for that action and that job and MUST NOT request anything from GitLab until the operator answers it. A job the key cannot act on MUST keep showing its non-fatal message instead of a prompt. The prompt MUST appear inside the framed content area of the screen that asked for it, above that screen's own content, which MUST stay visible behind it, and it MUST use the muted chrome color rather than any of the four status-bucket colors. The prompt MUST name the job and the action the operator is about to take, and MUST show the keys that answer it. Enter MUST confirm the prompt and Escape MUST cancel it; while the prompt is open those two keys answer it and every other key is ignored, except the quit key, which MUST still quit. Cancelling MUST choose nothing: the screen stays exactly as it was, no job action is recorded, and no message explains the cancellation. On confirmation the system MUST re-check the action against the job as it now stands in the pipeline and MUST refuse with that action's own non-fatal message when the job no longer qualifies, instead of starting it.
+Before the system starts or restarts a job at the operator's request, it MUST show a confirmation prompt for that action and that job and MUST NOT request anything from GitLab until the operator answers it. A job the key cannot act on MUST keep showing its non-fatal message instead of a prompt. The prompt MUST appear inside the framed content area of the screen that asked for it, above that screen's own content, which MUST stay visible behind it, and it MUST use the muted chrome color rather than any of the four status-bucket colors. The prompt MUST name the job and the action the operator is about to take, and MUST show the keys that answer it. Enter MUST confirm the prompt and Escape MUST cancel it; while the prompt is open those two keys answer it and every other key is ignored, except the quit key, which MUST still quit. Cancelling MUST choose nothing: the screen stays exactly as it was, no job action is recorded, and no message explains the cancellation. On confirmation the system MUST re-check the action against the job as it now stands in the pipeline and MUST refuse instead of starting it: with that action's own non-fatal message while the job is still in the pipeline, or with a message saying the job is no longer in the pipeline when a refresh dropped it.
 
 #### Scenario: Prompt for a restart
 - **WHEN** the operator presses the retry key on a failed or canceled job
@@ -45,11 +45,11 @@ Before the system starts or restarts a job at the operator's request, it MUST sh
 - **THEN** the prompt disappears and the named job action is requested exactly once
 
 #### Scenario: Cancelled action
-- **WHEN** the operator cancels the prompt
-- **THEN** no job action is requested, no message appears, and the screen is unchanged
+- **WHEN** the operator presses escape to cancel the prompt
+- **THEN** no job action is requested, no message appears, the prompt closes, and the screen behind it is unchanged: nothing navigates back
 
 #### Scenario: Other keys while the prompt is open
-- **WHEN** the operator presses a movement, refresh, open, or back key while the prompt is open
+- **WHEN** the operator presses a movement or refresh key while the prompt is open
 - **THEN** the prompt stays and nothing on the screen behind it changes
 
 #### Scenario: Quit while the prompt is open
@@ -58,4 +58,4 @@ Before the system starts or restarts a job at the operator's request, it MUST sh
 
 #### Scenario: The job changed while the prompt was open
 - **WHEN** the pipeline state changes while the prompt is open so that the named job no longer qualifies for that action
-- **THEN** confirming starts nothing in GitLab and shows the same non-fatal message the key shows for a job it cannot act on
+- **THEN** confirming starts nothing in GitLab and shows the message the key shows for a job it cannot act on, or that the job is no longer in this pipeline when a refresh dropped the job
