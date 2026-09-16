@@ -3,6 +3,7 @@ schema: spec-driven
 # Shown to AI when creating artifacts. Invariants for this repo — do not re-litigate in proposals.
 context: |
   Personal GitLab pipeline TUI. Nested screens: pipeline list → same-pipeline needs DAG → job log → Esc back.
+  Git workflow: stay on `main`. Do not create a feature or task branch unless the user explicitly asks; commit on `main` when committing.
 
   Stack (fixed):
   - TypeScript + React via @opentui/react (OpenTUI Zig renderer). Not Solid, Ink, Bubble Tea, or shell scripts.
@@ -38,6 +39,7 @@ rules:
 operations:
   apply:
     guidance:
+      - Stay on `main`. Do not create a feature or task branch; commit on `main` when the apply work warrants a commit.
       - Implement the TUI against the locked stack in context; do not swap frameworks mid-apply.
       - Spike glab GraphQL needs on the operator’s GitLab before building DAG layout.
   archive:
