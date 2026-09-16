@@ -4,9 +4,9 @@
 
 ## 2. Pure helpers
 
-- [ ] 2.1 Add `refLabel(ref)` in `src/pipeline-ref.ts` and verify with tests covering `refs/merge-requests/2/head` -> `!2`, `refs/heads/release/2.1-hotfix` -> `release/2.1-hotfix`, bare `main` -> `main`, `refs/tags/v1.0` -> `v1.0`, and an unrecognized ref returned unchanged.
-- [ ] 2.2 Add `relativeTime(iso, now)` in `src/relative-time.ts` and verify with tests using a fixed `now`: seconds, minutes, hours, days, and weeks boundaries produce `Xs`/`Xm`/`Xh`/`Xd`/`Xw`, and an empty or unparsable value produces `—`.
-- [ ] 2.3 Add `src/list-layout.ts` with the per-column width computation from the visible rows plus `fit(text, width)` (truncate with `…`, then pad), and verify with tests that mixed status-word lengths align the later columns, an over-long name is ellipsized into a single line, and a narrow available width shrinks the name to its minimum and drops the started column while the id and status columns remain.
+- [x] 2.1 Add `refLabel(ref)` in `src/pipeline-ref.ts` and verify with tests covering `refs/merge-requests/2/head` -> `!2`, `refs/heads/release/2.1-hotfix` -> `release/2.1-hotfix`, bare `main` -> `main`, `refs/tags/v1.0` -> `v1.0`, and an unrecognized ref returned unchanged.
+- [x] 2.2 Add `relativeTime(iso, now)` in `src/relative-time.ts` and verify with tests using a fixed `now`: seconds, minutes, hours, days, and weeks boundaries produce `Xs`/`Xm`/`Xh`/`Xd`/`Xw`, and an empty or unparsable value produces `—`.
+- [x] 2.3 Add `src/list-layout.ts` with the per-column width computation from the visible rows plus `fit(text, width)` (truncate with `…`, then pad), and verify with tests that mixed status-word lengths align the later columns, an over-long name is ellipsized into a single line, and a narrow available width shrinks the name to its minimum and drops the started column while the id and status columns remain.
 
 ## 3. List screen
 
