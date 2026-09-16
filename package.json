@@ -5,7 +5,9 @@
   "private": true,
   "scripts": {
     "start": "bun src/index.tsx",
-    "test": "bun test"
+    "test": "bun test",
+    "build": "bun build --compile src/index.tsx --no-compile-autoload-dotenv --outfile dist/glabscope",
+    "install:local": "bash scripts/install.sh"
   },
   "devDependencies": {
     "@types/bun": "latest",
