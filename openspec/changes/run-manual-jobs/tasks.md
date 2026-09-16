@@ -30,6 +30,6 @@ Not done: the operator chose to skip the live spike, because every waiting manua
 
 ## 6. Change-Level Verification
 
-- [ ] 6.1 Run `bun test` and `./node_modules/.bin/tsc --noEmit` and verify every test added or touched by this change passes and the type check is clean; report any pre-existing failure instead of fixing it here.
-- [ ] 6.2 Add the run action to the README key line next to the retry wording, without reordering or rewriting the rest of the line. Verify the README diff shows only that wording change.
+- [x] 6.1 Run `bun test` (`bun test`: 228 pass, 0 fail; `./node_modules/.bin/tsc --noEmit`: clean) and `./node_modules/.bin/tsc --noEmit` and verify every test added or touched by this change passes and the type check is clean; report any pre-existing failure instead of fixing it here.
+- [x] 6.2 Add the run action to the README key line next to the retry wording, without reordering or rewriting the rest of the line. Verify the README diff shows only that wording change.
 - [ ] 6.3 Manually exercise the change on a real pipeline of the operator's GitLab: run a waiting manual job from the graph and verify the same card turns running-or-pending with the graph back on its normal refresh interval, retry a failed job from the graph and from its log and verify each asks first, cancel a prompt on each of the three screens and verify nothing was started and nothing changed on screen, confirm that arrow, refresh and back keys do nothing while a prompt is open, and verify `ctrl+r` on a skipped job still shows the refusal notice.
