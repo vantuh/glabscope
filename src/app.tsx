@@ -504,11 +504,15 @@ export function App() {
       setRefreshing("graph");
       try {
         const graph = await fetchGraphNow(String(iid), () => stopped, (error) => {
-          dispatch({
-            type: "refreshError",
-            target: "graph",
-            message: error instanceof Error ? error.message : String(error),
-          });
+          // A rate-limited tick backs off silently, as the catch below has
+          // always done; anything else is a real refresh failure.
+          if (!(error instanceof RateLimitedError)) {
+            dispatch({
+              type: "refreshError",
+              target: "graph",
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
         });
         if (stopped) {
           return;

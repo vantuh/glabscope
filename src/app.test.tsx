@@ -947,6 +947,11 @@ test("graph refresh backs off on 429, resets after success, and keeps focus acro
       new RateLimitedError("429 Too Many Requests"),
       graphFor("RUNNING", [jobIn("b", "11", "running"), jobIn("a", "10", "running")]),
     ];
+    await waitFor(() => pollDelays(scheduled).includes(8000), "backoff scheduled");
+    await setup.renderOnce();
+    // A rate-limited tick backs off quietly: it is not a failure the operator
+    // has to read, so no refresh notice appears while the backoff is pending.
+    expect(setup.captureCharFrame()).not.toContain("refresh error");
     await waitFor(
       () => {
         const delays = pollDelays(scheduled);
