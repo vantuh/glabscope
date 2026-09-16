@@ -3049,3 +3049,45 @@ test("an action in flight blocks a different one on another job", async () => {
     setup.renderer.destroy();
   }
 });
+
+test("an action settling after another pipeline was opened leaves that pipeline alone", async () => {
+  listDefault = [runningRow(42, 5), row(43, 6, "success")];
+  const setup = await testRender(<App />, { width: 90, height: 18 });
+  try {
+    await waitForFrame(setup, (f) => f.includes("#42") && f.includes("#43"), "two pipelines");
+    graphGate.resolve(graphFor("FAILED", [{ ...jobIn("job-five", "10", "failed"), stage: "build" }]));
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (f) => f.includes("job-five"), "pipeline 5 graph");
+
+    retryGate = Promise.withResolvers();
+    await askAndConfirm(setup);
+    await waitFor(() => retryCalls.length === 1, "retry call");
+
+    // Leave for another pipeline while the restart is still unanswered.
+    setup.mockInput.pressEscape();
+    await waitForFrame(setup, (f) => f.includes("> #42"), "back on the list");
+    setup.mockInput.pressKey("ARROW_DOWN");
+    await waitForFrame(setup, (f) => f.includes("> #43"), "pipeline 6 selected");
+    graphScript = [
+      { ...graphFor("SUCCESS", [{ ...jobIn("job-six", "2", "success"), stage: "build" }]), iid: "6" },
+    ];
+    setup.mockInput.pressEnter();
+    await waitForFrame(
+      setup,
+      (f) => f.includes("pipeline 6") && f.includes("job-six"),
+      "pipeline 6 graph",
+    );
+
+    // The restart answers now; its follow-up fetch belongs to pipeline 5.
+    graphScript = [graphFor("RUNNING", [{ ...jobIn("job-five", "10", "running"), stage: "build" }])];
+    retryGate.resolve({ jobId: "10" });
+    await Bun.sleep(30);
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("job-six");
+    expect(frame).toContain("pipeline 6");
+    expect(frame).not.toContain("job-five");
+  } finally {
+    setup.renderer.destroy();
+  }
+});

@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Retry a failed job from the graph
-Pressing the retry key on the graph SHALL show the confirmation prompt for the focused job and, once the operator confirms it, restart that job in GitLab and then show the restarted attempt. The system SHALL only request a restart when the focused job's status is failed or canceled and the job is not a trigger or bridge job; for any other focused job the system MUST NOT request a restart, and while a waiting manual job is handled by the run requirement, every other status MUST contact no GitLab and MUST show a short non-fatal message instead. No restart MUST be requested before the operator confirms the prompt. The restart MUST go through the GitLab CLI retry command for that job's id, and the system MUST NOT restart a job by any other route.
+Pressing the retry key on the graph SHALL show the confirmation prompt for the focused job and, once the operator confirms it, restart that job in GitLab and then show the restarted attempt. The system SHALL only request a restart when the focused job's status is failed or canceled and the job is not a trigger or bridge job; for any other focused job the system MUST NOT request a restart, and while a waiting manual job is handled by the run requirement, every other status MUST contact no GitLab and MUST show a short non-fatal message instead. No restart MUST be requested before the operator confirms the prompt. The restart MUST go through the GitLab CLI retry command for that job's id, and the system MUST NOT restart a job by any other route. The refresh that follows a restart MUST belong to the pipeline that job is in, so a graph the operator has since opened for another pipeline is never replaced by it.
 
 #### Scenario: Retry a failed job
 - **WHEN** the focused job has failed and the operator presses the retry key and confirms the prompt
@@ -39,6 +39,10 @@ Pressing the retry key on the graph SHALL show the confirmation prompt for the f
 - **WHEN** a background or manual graph refresh completes while a retry is in flight
 - **THEN** the refreshed graph is shown and the retry in flight is unaffected
 
+#### Scenario: The restart settles after another pipeline was opened
+- **WHEN** the restart's answer arrives while the operator has opened another pipeline
+- **THEN** that pipeline's graph stays on screen and is not replaced by the restarted job's pipeline
+
 ### Requirement: Retry a failed attempt from the attempts list
 Pressing the retry key on the attempts list SHALL show the confirmation prompt for the focused attempt and, once the operator confirms it, restart that attempt in GitLab. The system SHALL only request a restart when the focused attempt's status is failed or canceled and it is not a trigger or bridge job; for any other attempt the system MUST NOT contact GitLab and MUST show a short non-fatal message instead. No restart MUST be requested before the operator confirms the prompt. The restart MUST go through the GitLab CLI retry command for that attempt's id, and the system MUST NOT restart an attempt by any other route. After a successful restart the attempts list MUST refresh for that job.
 
@@ -73,7 +77,7 @@ Pressing the retry key on the attempts list SHALL show the confirmation prompt f
 ## ADDED Requirements
 
 ### Requirement: Run a waiting manual job from the graph
-Pressing the retry key on the graph SHALL show the confirmation prompt for the focused job and, once the operator confirms it, run that job in GitLab when the job's status is `manual` and it is not a trigger or bridge job. The system SHALL only run a job in that state: for any other focused job it MUST NOT start a job and MUST show a short non-fatal message naming the states the key acts on. No run MUST be requested before the operator confirms the prompt. The run MUST go through the GitLab CLI command that triggers a manual job by job id, and the system MUST NOT start a job by any other route. The system MUST request at most one job action at a time, so a run and a restart can never be in flight together. After a successful run the graph MUST refresh immediately, so the card for that job shows its new status with focus still on that job.
+Pressing the retry key on the graph SHALL show the confirmation prompt for the focused job and, once the operator confirms it, run that job in GitLab when the job's status is `manual` and it is not a trigger or bridge job. The system SHALL only run a job in that state: for any other focused job it MUST NOT start a job and MUST show a short non-fatal message naming the states the key acts on. No run MUST be requested before the operator confirms the prompt. The run MUST go through the GitLab CLI command that triggers a manual job by job id, and the system MUST NOT start a job by any other route. The system MUST request at most one job action at a time, so a run and a restart can never be in flight together. After a successful run the graph MUST refresh immediately, so the card for that job shows its new status with focus still on that job, and that refresh MUST belong to the pipeline the job is in rather than replacing a graph the operator has since opened for another pipeline.
 
 #### Scenario: Run a waiting manual job
 - **WHEN** the focused job has status `manual` and the operator presses the retry key and confirms the prompt

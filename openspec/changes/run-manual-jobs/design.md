@@ -69,7 +69,7 @@ This also keeps the log screen honest: a manual traced job yields `null` there, 
 
 **6. The refresh and focus path is retry's, unchanged.**
 
-A successful run dispatches `retrySucceeded` with the id the CLI printed and then `refreshGraphAfterRetry(iid)`, so the graph fetches once, newest-wins ordering still applies, and focus stays on the same job: by id in the normal in-place enqueue case, or by job name+stage through the existing `visibleMatchIndex` fallback if GitLab answered with a different attempt. The pipeline turning active again is what restores the normal polling interval, because the graph loop derives its delay from the refreshed pipeline status; no polling code changes.
+A successful run dispatches `retrySucceeded` with the id the CLI printed and then `refreshGraphAfterRetry(iid)`, so the graph fetches once, newest-wins ordering still applies, and focus stays on the same job: by id in the normal in-place enqueue case, or by job name+stage through the existing `visibleMatchIndex` fallback if GitLab answered with a different attempt. The pipeline turning active again is what restores the normal polling interval, because the graph loop derives its delay from the refreshed pipeline status; no polling code changes. The follow-up fetch is also bound to the pipeline the action belongs to — the resolve path compares the pipeline on screen against the action's own — so an action that settles after the operator opened another pipeline cannot put the first pipeline's graph back (see review follow-up 7.8).
 
 **7. The graph footer names both actions.**
 

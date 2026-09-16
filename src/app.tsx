@@ -342,6 +342,9 @@ export function App() {
    * without restarting the loop or fetching a second time.
    */
   const graphWatchRef = useRef<{ isSlow: () => boolean; wake: () => void } | null>(null);
+  /** The pipeline on screen now, read when a job action settles. */
+  const graphIidRef = useRef(model.graph?.iid);
+  graphIidRef.current = model.graph?.iid;
   const focusedId = focusedJob(model)?.id;
   const writeClipboard = useMemo(() => clipboardWriter(renderer), [renderer]);
   const [copiedNotice, setCopiedNotice] = useState(false);
@@ -654,7 +657,10 @@ export function App() {
     ({ jobId }: { jobId: string | null }) => {
       dispatch({ type: "retrySucceeded", jobId });
       const iid = model.graph?.iid;
-      if (iid && (screen !== "logs" || jobId)) {
+      // Only the pipeline this action belongs to may be refreshed: the operator
+      // can leave for another one while the action is unanswered, and that
+      // screen's graph must not be replaced by a late answer.
+      if (iid && graphIidRef.current === iid && (screen !== "logs" || jobId)) {
         refreshGraphAfterRetry(iid);
       }
     };
