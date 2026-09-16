@@ -11,7 +11,7 @@ Superseded by the latest-attempt decision (design decision 5): the jobs connecti
 ## 3. Latest Attempt in the Graph
 
 - [x] 3.1 Keep the jobs connection unfiltered (no `retried: false`, so earlier attempts stay in the payload for the attempts list) and add `src/fixtures/pipeline-jobs-retried.json` with a retried-away attempt. Verify `src/glab/query.test.ts` records that the query asks for every attempt, and `src/glab/graph.test.ts` collapses that fixture into exactly one node per job name+stage with its `needs` intact.
-- [ ] 3.2 Reconcile graph focus by job id first and by job name when the id is gone, so an attempt swap keeps focus on the same job. Verify `src/model.test.ts` covers id present, id replaced by a new attempt with the same name, and neither present falling back to the nearest row.
+- [x] 3.2 Reconcile graph focus by job id first and by job name when the id is gone, so an attempt swap keeps focus on the same job. Verify `src/model.test.ts` covers id present, id replaced by a new attempt with the same name, and neither present falling back to the nearest row.
 
 ## 4. Retry on the Job Graph
 

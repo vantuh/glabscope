@@ -307,6 +307,59 @@ test("refreshGraph preserves the focused job when refreshed jobs are reordered",
   expect(focusedJob(model)?.id).toBe("b");
 });
 
+function attempt(name: string, numericId: string, retried: boolean): JobNode {
+  return {
+    ...job(name),
+    id: `gid://gitlab/Ci::Build/${numericId}`,
+    numericId,
+    retried,
+  };
+}
+
+test("refreshGraph moves focus to a job's new attempt when the old id is gone", () => {
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([attempt("lint", "10", false), job("a")], "RUNNING"),
+  });
+  model = reduce(model, { type: "focusJob", id: "gid://gitlab/Ci::Build/10" });
+  // The superseded attempt stays in the payload for the attempts list.
+  model = reduce(model, {
+    type: "refreshGraph",
+    graph: graph([attempt("lint", "10", true), attempt("lint", "12", false), job("a")], "RUNNING"),
+  });
+  expect(focusedJob(model)?.numericId).toBe("12");
+});
+
+test("refreshGraph falls back to the nearest row when the focused job is gone", () => {
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([job("a"), job("b")], "RUNNING"),
+  });
+  model = reduce(model, { type: "focusJob", id: "b" });
+  model = reduce(model, {
+    type: "refreshGraph",
+    graph: graph([job("c")], "RUNNING"),
+  });
+  expect(focusedJob(model)?.name).toBe("c");
+});
+
+test("refresh while logs moves focus to the new attempt but keeps tracing the old one", () => {
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([attempt("lint", "10", false)], "RUNNING"),
+  });
+  model = reduce(model, { type: "focusJob", id: "gid://gitlab/Ci::Build/10" });
+  model = reduce(model, { type: "openLogs" });
+  model = reduce(model, { type: "logsReady" });
+  model = reduce(model, {
+    type: "refreshGraph",
+    graph: graph([attempt("lint", "10", true), attempt("lint", "12", false)], "RUNNING"),
+  });
+  expect(model.logJobId).toBe("10");
+  expect(model.screen).toBe("logs");
+  expect(focusedJob(model)?.numericId).toBe("12");
+});
+
 test("manual refresh flag is set by the action and cleared by outcomes", () => {
   let model = reduce(emptyModel, { type: "pipelines", pipelines: [pipeline(1, 1)] });
   model = reduce(model, { type: "manualRefresh", target: "list" });

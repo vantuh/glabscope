@@ -104,19 +104,37 @@ function clamp(index: number, length: number): number {
   return Math.min(Math.max(index, 0), length - 1);
 }
 
-function visibleFocusIndex(
+/**
+ * Index in `graph.jobs` of the visible (latest-attempt) card matching `id`,
+ * falling back to the previous job's name+stage when a retry replaced its id.
+ * -1 when neither matches.
+ */
+function visibleMatchIndex(
   graph: PipelineGraph,
   id: string | undefined,
   previous?: JobNode,
 ): number {
   const visible = latestJobs(graph.jobs);
-  const columns = buildStageColumns(visible, graph.stageNames);
-  const preferred =
+  const match =
     visible.find((job) => job.id === id) ??
     (previous
       ? visible.find((job) => job.name === previous.name && job.stage === previous.stage)
-      : undefined) ??
-    columns[0]?.jobs[0];
+      : undefined);
+  return match ? graph.jobs.findIndex((job) => job.id === match.id) : -1;
+}
+
+function visibleFocusIndex(
+  graph: PipelineGraph,
+  id: string | undefined,
+  previous?: JobNode,
+): number {
+  const matched = visibleMatchIndex(graph, id, previous);
+  if (matched !== -1) {
+    return matched;
+  }
+  const visible = latestJobs(graph.jobs);
+  const columns = buildStageColumns(visible, graph.stageNames);
+  const preferred = columns[0]?.jobs[0];
   if (!preferred) {
     return 0;
   }
@@ -196,15 +214,14 @@ export function reduce(model: AppModel, action: Action): AppModel {
     case "refreshGraph": {
       const current = focusedJob(model);
       // Logs keep tracing a job that may have dropped off the refreshed
-      // graph; do not clamp focus back onto a different card.
+      // graph; focus still follows the same job to its new attempt, but never
+      // clamps onto a different card.
       if (model.screen === "logs") {
-        const stillThere = current
-          ? action.graph.jobs.findIndex((job) => job.id === current.id)
-          : -1;
+        const matched = visibleMatchIndex(action.graph, current?.id, current);
         return {
           ...model,
           graph: action.graph,
-          focusedJobIndex: stillThere !== -1 ? stillThere : model.focusedJobIndex,
+          focusedJobIndex: matched !== -1 ? matched : model.focusedJobIndex,
           refreshWarning: null,
           manualRefresh: null,
         };
