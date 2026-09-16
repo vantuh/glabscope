@@ -26,7 +26,7 @@ None.
 ## Impact
 
 - New `src/glab/retry.ts` wrapping `glab ci retry <job-id>` and reading the new job id from its output; `src/keys.ts` gains the `ctrl+r` predicate.
-- `src/glab/query.ts` / `src/glab/graph.ts`: request the latest attempt per job (`jobs(retried: false)`).
+- `src/glab/query.ts` / `src/glab/graph.ts`: keep the jobs connection unfiltered so earlier attempts reach the attempts list, and show one card per job from `latestJobs`.
 - `src/model.ts` / `src/app.tsx`: retry in-flight guard, non-fatal retry messages, immediate graph refresh after retry, focus reconciliation by job name when the focused attempt id is gone, and log re-attach to a new job id.
 - Tests: `src/glab/retry.test.ts` (new), `src/glab/query.test.ts`, `src/model.test.ts`, `src/app.test.tsx`.
 - Builds on the uncommitted `gitlab-style-pipeline-graph` work in these files; its in-progress failing focus test is out of scope here.
