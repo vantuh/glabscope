@@ -48,7 +48,7 @@ The system SHALL return the operator to the same pipeline list (same selection i
 - **THEN** they see the pipeline list again
 
 ### Requirement: Refresh active pipeline statuses
-While the pipeline list contains at least one running or pending pipeline, the system SHALL refresh the list automatically on a bounded interval. When no visible pipeline is running or pending, the system SHALL slow automatic refresh to a bounded watch interval instead of stopping, so externally started pipelines still appear.
+While the pipeline list contains at least one running or pending pipeline, the system SHALL refresh the list automatically on a bounded interval. When no visible pipeline is running or pending, the system SHALL slow automatic refresh to a bounded watch interval instead of stopping, so externally started pipelines still appear. The watch interval SHALL be at least twice the normal interval, so a list with nothing active is observably quieter than one with an active pipeline.
 
 #### Scenario: Active pipeline changes status
 - **WHEN** the operator remains on the pipeline list and a visible running or pending pipeline changes status
@@ -61,6 +61,10 @@ While the pipeline list contains at least one running or pending pipeline, the s
 #### Scenario: New pipeline starts while watching
 - **WHEN** automatic refresh is slowed to the watch interval and the operator starts a new pipeline from outside the TUI
 - **THEN** the new pipeline appears in the list within one successful watch refresh without manual navigation
+
+#### Scenario: Watch interval is slowed
+- **WHEN** the list holds no running or pending pipeline and the operator stays on it
+- **THEN** consecutive automatic refreshes are spaced at least twice as far apart as they are while a running or pending pipeline is visible
 
 ### Requirement: Preserve list interaction during refresh
 An automatic refresh SHALL preserve the selected pipeline by identity when it is still present. A failed background refresh MUST keep the last successful list visible and MUST NOT turn the screen into a fatal error.

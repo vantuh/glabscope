@@ -76,7 +76,7 @@ The operator SHALL move focus among job cards and confirm the focused job to ope
 - **THEN** focus lands on the last job in that stage rather than leaving the graph or wrapping around
 
 ### Requirement: Poll while the pipeline is active
-While the selected pipeline's status is running or pending, the system SHALL refresh job statuses, dependency edges, and pipeline status on a bounded interval. When the pipeline is terminal, the system SHALL slow automatic refresh to a bounded watch interval instead of stopping, so externally retried or created jobs still appear. Refresh MUST pause while the job log screen is open. If GitLab rate-limits a refresh, the system SHALL increase the delay up to a bounded maximum and SHALL restore the normal interval after a successful refresh. A failed background refresh MUST keep the last successful graph visible and MUST NOT prevent navigation.
+While the selected pipeline's status is running or pending, the system SHALL refresh job statuses, dependency edges, and pipeline status on a bounded interval. When the pipeline is terminal, the system SHALL slow automatic refresh to a bounded watch interval instead of stopping, so externally retried or created jobs still appear. The watch interval SHALL be at least twice the normal interval, so a terminal graph is observably quieter than a running or pending one. Refresh MUST pause while the job log screen is open. If GitLab rate-limits a refresh, the system SHALL increase the delay up to a bounded maximum and SHALL restore the normal interval after a successful refresh. A failed background refresh MUST keep the last successful graph visible and MUST NOT prevent navigation.
 
 #### Scenario: Running pipeline
 - **WHEN** the operator stays on the graph of a running or pending pipeline
@@ -97,6 +97,10 @@ While the selected pipeline's status is running or pending, the system SHALL ref
 #### Scenario: Finished pipeline
 - **WHEN** a graph refresh reports that the pipeline reached a terminal status
 - **THEN** the refreshed terminal state remains visible and automatic graph refresh slows to the bounded watch interval
+
+#### Scenario: Watch interval is slowed
+- **WHEN** a graph refresh reports that the pipeline is terminal and the operator stays on the graph
+- **THEN** consecutive automatic refreshes are spaced at least twice as far apart as they are while the pipeline is running or pending
 
 #### Scenario: Job retried while watching
 - **WHEN** the pipeline is terminal, automatic refresh is slowed to the watch interval, and the operator retries a job from outside the TUI
