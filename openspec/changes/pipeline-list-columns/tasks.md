@@ -10,11 +10,11 @@
 
 ## 3. List screen
 
-- [ ] 3.1 Render each pipeline row in `src/app.tsx` as one `<text>` of spans (marker, id, status, name, started) with `statusIcon()` + `BUCKET_COLOR` confined to the status cell and the id/started cells in the muted chrome color, then verify in `src/app.test.tsx` that a rendered frame shows the `>` marker before the id, the glyph plus status word, and `!2` for an MR-ref row.
-- [ ] 3.2 Add the muted header row above the scrollbox using the same computed widths, and verify in `src/app.test.tsx` that the header is present in the frame, that its started cell and the first row's started cell land in the same column, and that the header is still present after the selection scrolls past the last visible row.
-- [ ] 3.3 Implement the narrow-panel degradation (name shrinks first, started drops before id and status), and verify with a frame rendered at a narrow width that the id and status are still visible, the started column is gone, and the number of rendered row lines still equals the number of pipelines (no wrapping).
+- [x] 3.1 Render each pipeline row in `src/app.tsx` as one `<text>` of spans (marker, id, status, name, started) with `statusIcon()` + `BUCKET_COLOR` confined to the status cell and the id/started cells in the muted chrome color, then verify in `src/app.test.tsx` that a rendered frame shows the `>` marker before the id, the glyph plus status word, and `!2` for an MR-ref row.
+- [x] 3.2 Add the muted header row above the scrollbox using the same computed widths, and verify in `src/app.test.tsx` that the header is present in the frame, that its started cell and the first row's started cell land in the same column, and that the header is still present after the selection scrolls past the last visible row.
+- [x] 3.3 Implement the narrow-panel degradation (name shrinks first, started drops before id and status), and verify with a frame rendered at a narrow width that the id and status are still visible, the started column is gone, and the number of rendered row lines still equals the number of pipelines (no wrapping).
 
 ## 4. Verification
 
-- [ ] 4.1 Run the full `bun test` suite and `./node_modules/.bin/tsc --noEmit` and verify both are green with no new failures against the current baseline (173 passing tests, clean type check).
+- [x] 4.1 Run the full `bun test` suite and `./node_modules/.bin/tsc --noEmit` and verify both are green with no new failures against the pre-change baseline (173 passing tests, clean type check at plan time; 200 passing after this change).
 - [ ] 4.2 Run `bun start` from a GitLab-bound working tree and verify by eye that columns line up, names read as `!N`/branch/tag, ages advance across a poll cycle without a manual refresh, and narrowing the terminal drops the started column instead of wrapping rows; record the observed outcome in the change (or state it as not run).

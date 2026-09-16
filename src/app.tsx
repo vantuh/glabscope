@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core";
-import { useKeyboard, useRenderer, useSelectionHandler } from "@opentui/react";
+import { useKeyboard, useRenderer, useSelectionHandler, useTerminalDimensions } from "@opentui/react";
 import {
   emptyModel,
   focusedAttempt,
@@ -21,6 +21,8 @@ import { spawnTrace } from "./glab/trace.ts";
 import { isRetryableJob, retryJob } from "./glab/retry.ts";
 import { clipboardWriter, copyPlainText } from "./clipboard.ts";
 import { BUCKET_COLOR, isActivePipelineStatus, statusIcon } from "./status.ts";
+import { headerLine, listCells, listColumns, pipelineCells } from "./list-layout.ts";
+import type { PipelineRow as PipelineRowType } from "./glab/list.ts";
 import {
   STRIP_WIDTH,
   buildStageGraph,
@@ -33,6 +35,10 @@ import type { DagEdge } from "./layout/dag.ts";
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const CHROME_COLOR = "#4b5563";
 const HELP_COLOR = "#9ca3af";
+/** Id and started cells: muted, but brighter than the frame, and no bucket color. */
+const MUTED_TEXT = "#6b7280";
+/** ScreenPanel's padding (1) plus border (1) on each side of the column content. */
+const PANEL_CHROME_WIDTH = 4;
 /** How long the `copied to clipboard` footer notice stays up. */
 export const COPIED_NOTICE_MS = 1500;
 
@@ -193,6 +199,32 @@ export function GraphBody({
   );
 }
 
+export function PipelineRow({
+  cells,
+  columns,
+  bucket,
+  focused,
+}: {
+  cells: ReturnType<typeof pipelineCells>;
+  columns: ReturnType<typeof listColumns>;
+  bucket: PipelineRowType["bucket"];
+  focused: boolean;
+}) {
+  // Only the status cell carries the bucket color; the rest of the row is muted
+  // chrome, brightening as a whole when the row is the selected one.
+  const dataColor = focused ? FOCUS_BORDER : MUTED_TEXT;
+  return (
+    <text>
+      <span fg={dataColor}>{focused ? "> " : "  "}</span>
+      {listCells(cells, columns).map((cell) => (
+        <span key={cell.role} fg={cell.role === "status" ? BUCKET_COLOR[bucket] : dataColor}>
+          {cell.text}
+        </span>
+      ))}
+    </text>
+  );
+}
+
 function LoadingOverlay({ label }: { label: string }) {
   const frame = useSpinnerFrame();
 
@@ -217,6 +249,7 @@ function LoadingOverlay({ label }: { label: string }) {
 
 export function App() {
   const renderer = useRenderer();
+  const { width: terminalWidth } = useTerminalDimensions();
   const [model, dispatch] = useReducer(reduce, emptyModel);
   const [refreshing, setRefreshing] = useState<"list" | "graph" | null>(null);
   const logProc = useRef<ReturnType<typeof Bun.spawn> | null>(null);
@@ -827,6 +860,10 @@ export function App() {
     );
   }
 
+  const now = Date.now();
+  const rows = model.pipelines.map((row) => pipelineCells(row, now));
+  const columns = listColumns(rows, terminalWidth - PANEL_CHROME_WIDTH);
+
   return (
     <ScreenPanel
       title="pipelines"
@@ -843,11 +880,22 @@ export function App() {
       {model.refreshWarning ? (
         <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
       ) : null}
+      {model.pipelines.length > 0 ? (
+        <box height={1} flexShrink={0}>
+          <text fg={CHROME_COLOR} selectable={false}>
+            {headerLine(columns)}
+          </text>
+        </box>
+      ) : null}
       <scrollbox focused flexGrow={1}>
         {model.pipelines.map((row, index) => (
-          <text key={row.id} fg={BUCKET_COLOR[row.bucket]}>
-            {index === model.selectedIndex ? ">" : " "} #{row.id}  {row.status}  {row.ref}
-          </text>
+          <PipelineRow
+            key={row.id}
+            cells={rows[index] ?? pipelineCells(row, now)}
+            columns={columns}
+            bucket={row.bucket}
+            focused={index === model.selectedIndex}
+          />
         ))}
       </scrollbox>
     </ScreenPanel>

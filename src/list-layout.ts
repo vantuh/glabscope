@@ -83,21 +83,34 @@ export function fit(text: string, width: number): string {
   return width === 1 ? "…" : `${text.slice(0, width - 1)}…`;
 }
 
-/** Padded cells in render order, gaps excluded; an absent column is omitted. */
-export function listCellTexts(cells: RowCells, columns: ListColumns): string[] {
-  const texts = [fit(cells.id, columns.id), fit(cells.status, columns.status)];
+export type ListCell = {
+  role: "id" | "status" | "name" | "started";
+  /** Padded to its column, with the gap that separates it from the previous. */
+  text: string;
+};
+
+/** A row's cells in render order, gaps included; an absent column is omitted. */
+export function listCells(cells: RowCells, columns: ListColumns): ListCell[] {
+  const out: ListCell[] = [];
+  const add = (role: ListCell["role"], text: string, width: number) => {
+    out.push({ role, text: `${out.length === 0 ? "" : " "}${fit(text, width)}` });
+  };
+  add("id", cells.id, columns.id);
+  add("status", cells.status, columns.status);
   if (columns.name !== null) {
-    texts.push(fit(cells.name, columns.name));
+    add("name", cells.name, columns.name);
   }
   if (columns.started !== null) {
-    texts.push(fit(cells.started, columns.started));
+    add("started", cells.started, columns.started);
   }
-  return texts;
+  return out;
 }
 
 /** A full row line without the selection marker, gaps included. */
 export function listRowText(cells: RowCells, columns: ListColumns): string {
-  return listCellTexts(cells, columns).join(" ");
+  return listCells(cells, columns)
+    .map((cell) => cell.text)
+    .join("");
 }
 
 /** The column header line: same gaps, so it cannot drift from the rows. */

@@ -117,7 +117,7 @@ import { App, COPIED_NOTICE_MS, GraphBody, ScreenPanel } from "./app.tsx";
 import { buildStageGraph } from "./layout/stage-graph.ts";
 import fixture from "./fixtures/pipeline-jobs-needs.json";
 import { parsePipelineGraph } from "./glab/graph.ts";
-import { statusIcon } from "./status.ts";
+import { BUCKET_COLOR, statusIcon } from "./status.ts";
 
 async function waitForFrame(
   setup: Awaited<ReturnType<typeof testRender>>,
@@ -2423,6 +2423,121 @@ test("a retry landing after another job's log was opened leaves it alone", async
     expect(frame).toContain("deploy output");
     expect(frame).not.toContain("lint output");
     expect(frame).not.toContain("log lint");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+function hexRgb(hex: string): number[] {
+  return [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16));
+}
+
+function listRowLines(frame: string): string[] {
+  return frame.split("\n").filter((line) => /#\d/.test(line));
+}
+
+function rowSpans(setup: Awaited<ReturnType<typeof testRender>>, needle: string): CapturedSpan[] {
+  return setup
+    .captureSpans()
+    .lines.flatMap((line) => line.spans)
+    .filter((span) => span.text.includes(needle));
+}
+
+test("list rows render as columns with the bucket color on the status cell alone", async () => {
+  listDefault = [
+    {
+      id: 42,
+      iid: 5,
+      status: "failed",
+      bucket: "failed",
+      ref: "refs/merge-requests/2/head",
+      source: "merge_request_event",
+      createdAt: recentCreatedAt(),
+    },
+    row(43, 4, "success"),
+  ];
+  const setup = await testRender(<App />, { width: 70, height: 12 });
+  try {
+    const frame = await waitForFrame(setup, (f) => f.includes("!2"), "the ref label");
+    const rows = listRowLines(frame);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("> #42");
+    expect(rows[0]).toContain("failed");
+    expect(rows[0]).toContain("!2");
+    expect(rows[0]).toContain("5m");
+    expect(rows[1]).toContain("  #43");
+    expect(rows[1]).toContain("success");
+    expect(rows[1]).toContain("main");
+
+    // The bucket color marks the status cell, not the id, name or age.
+    expect(rowSpans(setup, "failed")[0]?.fg.toInts().slice(0, 3)).toEqual(hexRgb(BUCKET_COLOR.failed));
+    expect(rowSpans(setup, "#42")[0]?.fg.toInts().slice(0, 3)).not.toEqual(hexRgb(BUCKET_COLOR.failed));
+    expect(rowSpans(setup, "!2")[0]?.fg.toInts().slice(0, 3)).not.toEqual(hexRgb(BUCKET_COLOR.failed));
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("the column header names the columns and stays while the rows scroll", async () => {
+  listDefault = Array.from({ length: 12 }, (_, index) => row(100 + index, index, "success"));
+  const setup = await testRender(<App />, { width: 70, height: 12 });
+  try {
+    const frame = await waitForFrame(setup, (f) => f.includes("PIPELINE"), "the column header");
+    const header = frame.split("\n").find((line) => line.includes("PIPELINE")) ?? "";
+    const firstRow = listRowLines(frame)[0] ?? "";
+    expect(header).toContain("STATUS");
+    expect(header).toContain("NAME");
+    expect(header).toContain("STARTED");
+    expect(header.indexOf("NAME")).toBe(firstRow.indexOf("main"));
+
+    for (let press = 0; press < 10; press++) {
+      setup.mockInput.pressArrow("down");
+    }
+    const scrolled = await waitForFrame(
+      setup,
+      (f) => f.includes("> #110"),
+      "the list scrolled past the first rows",
+    );
+    expect(scrolled).not.toContain("#100");
+    expect(scrolled).toContain("PIPELINE");
+    expect(scrolled).toContain("STARTED");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a narrow panel drops the started column instead of wrapping rows", async () => {
+  listDefault = [row(42, 5, "success"), row(43, 4, "failed", "failed")];
+  const setup = await testRender(<App />, { width: 34, height: 12 });
+  try {
+    const frame = await waitForFrame(setup, (f) => f.includes("#42"), "the narrow list");
+    const rows = listRowLines(frame);
+    // One line per pipeline: a wrapped row would add a second line for one id.
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("success");
+    expect(rows[1]).toContain("failed");
+    expect(frame).not.toContain("5m");
+    expect(frame).not.toContain("STARTED");
+    expect(frame).toContain("PIPELINE");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a long ref name is ellipsized in place and keeps the started column", async () => {
+  listDefault = [{ ...row(42, 5, "success"), ref: "refs/heads/release/2.1-hotfix-with-a-long-tail" }];
+  const setup = await testRender(<App />, { width: 50, height: 12 });
+  try {
+    const frame = await waitForFrame(
+      setup,
+      (f) => f.split("\n").some((line) => line.includes("#42") && line.includes("…")),
+      "the ellipsized name",
+    );
+    const rows = listRowLines(frame);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("release");
+    expect(rows[0]).toContain("5m");
+    expect(rows[0]?.indexOf("5m")).toBeGreaterThan(rows[0]?.indexOf("…") ?? -1);
   } finally {
     setup.renderer.destroy();
   }
