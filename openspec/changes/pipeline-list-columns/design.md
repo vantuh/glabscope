@@ -7,6 +7,7 @@ See proposal.md — Why for motivation. What shapes the approach:
 - Precedents to reuse instead of inventing: `statusIcon()` and `BUCKET_COLOR` in `src/status.ts`; per-column width from content in `columnInnerWidth()` plus `padEnd` in the job graph; `<span fg=…>` runs in the log screen; a `useRenderer`-driven layout reading nothing but props.
 - OpenTUI React 0.5.11 exposes `<text>`, `<span>`, `<box>`, `<scrollbox>` as JSX intrinsics. `TextTableRenderable` exists in `@opentui/core` but has no JSX intrinsic; registering it needs `extend()`.
 - The list screen re-renders on every poll (`shouldPollList` keeps a 4s/5s cycle running for as long as the list is visible), so any render-time-derived value refreshes without extra work.
+- The Nerd Font status glyph measures one cell under all three OpenTUI width methods (`wcwidth`, `unicode`, `unicode-wide`), so `.length` is a faithful measure for the column math. The test renderer's character frame drops the glyph, so frame assertions match the status word instead.
 
 ## Goals / Non-Goals
 
@@ -54,7 +55,7 @@ It exposes `fit(text, width)` = truncate with `…` then `padEnd`. Both the head
 
 - [Dynamic status width: a rare `waiting_for_resource` (20 chars) widens the status column and shifts the name column for that refresh] → Accepted for now; aliasing status words would invent vocabulary the rest of the app does not use. Revisit only if it is seen in practice.
 - [`fit()` measures with `String.length`, like `jobLabelWidth()` in the graph, so a Nerd Font glyph is assumed to occupy one cell] → Consistent with the existing app-wide assumption (README already requires a Nerd Font); no new exposure.
-- [A visible vertical scrollbar inside the scrollbox could shrink row content while the header keeps its full width, misaligning the right edge] → Verify in a frame test that the header and the first row place the started cell in the same column; if the scrollbar overlaps, reserve one right-edge cell in the computed widths.
+- [A visible vertical scrollbar inside the scrollbox overdraws the last cell of the rows' content while the header keeps its full width] → Verified by rendering the list at 80x14 and 46x14: the scrollbar paints over the last column of the rows' area, and a row that filled the width lost that cell. `PANEL_CHROME_WIDTH` therefore reserves one column for it, so the rows end one cell short of the scrollbar and stay aligned with the header.
 - [Long name truncation can hide the distinguishing part of `release/2.1-hotfix-a` vs `release/2.1-hotfix-b`] → Accepted; the id column and Enter still identify the pipeline unambiguously.
 
 ## Open Questions

@@ -37,8 +37,12 @@ const CHROME_COLOR = "#4b5563";
 const HELP_COLOR = "#9ca3af";
 /** Id and started cells: muted, but brighter than the frame, and no bucket color. */
 const MUTED_TEXT = "#6b7280";
-/** ScreenPanel's padding (1) plus border (1) on each side of the column content. */
-const PANEL_CHROME_WIDTH = 4;
+/**
+ * ScreenPanel's padding (1) plus border (1) on each side of the column content,
+ * plus the column the rows' scrollbar draws over at the right edge once the
+ * list overflows.
+ */
+const PANEL_CHROME_WIDTH = 5;
 /** How long the `copied to clipboard` footer notice stays up. */
 export const COPIED_NOTICE_MS = 1500;
 
