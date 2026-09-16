@@ -28,6 +28,6 @@ Superseded by the latest-attempt decision (design decision 5): the jobs connecti
 
 ## 6. Verification
 
-- [ ] 6.1 Run `bun test` and verify every test added or touched by this change passes; report any still-failing test that belongs to the in-progress `gitlab-style-pipeline-graph` change instead of fixing it here.
-- [ ] 6.2 List the retry key in the README's key line, next to the existing keys, without reordering or rewriting the rest of that line. Verify the README diff shows only the added key.
+- [x] 6.1 Run `bun test` and verify every test added or touched by this change passes; report any still-failing test that belongs to the in-progress `gitlab-style-pipeline-graph` change instead of fixing it here.
+- [x] 6.2 List the retry key in the README's key line, next to the existing keys, without reordering or rewriting the rest of that line. Verify the README diff shows only the added key.
 - [ ] 6.3 Manually retry a failed job from the graph and from its log against the operator's GitLab: verify the restarted attempt replaces the old node, the log screen streams the new attempt, `ctrl+r` on a running and on a successful job changes nothing but shows the message, and Esc still returns to the graph and list.
