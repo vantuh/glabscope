@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core";
-import { useKeyboard, useRenderer } from "@opentui/react";
+import { useKeyboard, useRenderer, useSelectionHandler } from "@opentui/react";
 import {
   emptyModel,
   focusedAttempt,
@@ -18,6 +18,7 @@ import { listPipelines } from "./glab/list.ts";
 import { fetchPipelineGraph, jobAttempts, NeedsUnavailableError, type JobNode } from "./glab/graph.ts";
 import { RateLimitedError } from "./glab/ratelimit.ts";
 import { spawnTrace } from "./glab/trace.ts";
+import { clipboardWriter, copyPlainText } from "./clipboard.ts";
 import { BUCKET_COLOR, isActivePipelineStatus, statusIcon } from "./status.ts";
 import {
   STRIP_WIDTH,
@@ -62,7 +63,9 @@ export function ScreenPanel({
         </box>
         {footer ? (
           <box flexDirection="row">
-            <text fg={HELP_COLOR}>{footer}</text>
+            <text fg={HELP_COLOR} selectable={false}>
+              {footer}
+            </text>
             {status}
           </box>
         ) : null}
@@ -206,6 +209,14 @@ export function App() {
   const navigatingRef = useRef(model.navigating);
   navigatingRef.current = model.navigating;
   const focusedId = focusedJob(model)?.id;
+  const writeClipboard = useMemo(() => clipboardWriter(renderer), [renderer]);
+
+  // Only the log body is copy-on-select; every other screen stays as before.
+  useSelectionHandler((selection) => {
+    if (model.screen === "logs") {
+      copyPlainText(selection.getSelectedText(), writeClipboard);
+    }
+  });
 
   useEffect(() => {
     if (model.screen !== "graph" || !focusedId) {
@@ -518,6 +529,9 @@ export function App() {
         dispatch({ type: "openLogs" });
       }
     }
+    if (model.screen === "logs" && key.name === "y") {
+      copyPlainText(model.logBuffer, writeClipboard);
+    }
     if (model.screen === "attempts" && model.graph) {
       const card = focusedJob(model);
       const attempts = card ? jobAttempts(model.graph.jobs, card) : [];
@@ -570,7 +584,7 @@ export function App() {
     return (
       <ScreenPanel
         title={`log ${job?.name ?? "job"}`}
-        footer={`${model.logDone ? "ended" : "live"} · esc back`}
+        footer={`${model.logDone ? "ended" : "live"} · y yank · esc back`}
       >
         <scrollbox focused flexGrow={1} stickyScroll>
           <text>

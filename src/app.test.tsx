@@ -4,6 +4,7 @@ import * as probeModule from "./glab/probe.ts";
 import * as listModule from "./glab/list.ts";
 import * as graphModule from "./glab/graph.ts";
 import * as traceModule from "./glab/trace.ts";
+import * as clipboardModule from "./clipboard.ts";
 import { RateLimitedError } from "./glab/ratelimit.ts";
 import type { PipelineRow } from "./glab/list.ts";
 
@@ -446,7 +447,7 @@ test("live log chrome keeps the waiting message inside the panel", async () => {
     setup.mockInput.pressEnter();
     const frame = await waitForFrame(
       setup,
-      (text) => text.includes("live · esc back"),
+      (text) => text.includes("live · y yank · esc back"),
       "live log screen",
     );
     expect(frame).toContain("log build");
@@ -469,7 +470,7 @@ test("log panel paints SGR red and leaves unstyled ERROR default", async () => {
       "colored log screen",
     );
     expect(frame).toContain("log build");
-    expect(frame).toContain("ended · esc back");
+    expect(frame).toContain("ended · y yank · esc back");
     expect(frame).toMatch(/[╭╮╰╯]/);
     const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
     const failSpan = spans.find((span) => span.text.includes("FAIL"));
@@ -511,11 +512,11 @@ test("graph shows an animated loading line inside its frame before the log scree
     }
     const endedFrame = await waitForFrame(
       setup,
-      (text) => text.includes("ended · esc back"),
+      (text) => text.includes("ended · y yank · esc back"),
       "ended log screen",
     );
     expect(endedFrame).toContain("log build");
-    expect(endedFrame).toContain("ended · esc back");
+    expect(endedFrame).toContain("ended · y yank · esc back");
     expect(endedFrame).toContain("waiting for glab ci trace…");
     expect(endedFrame).toMatch(/[╭╮╰╯]/);
   } finally {
@@ -799,7 +800,7 @@ test("graph polling pauses during logs, resumes on return, and slows to the watc
 
     traceStaysLive = true;
     setup.mockInput.pressEnter();
-    await waitForFrame(setup, (frame) => frame.includes("live · esc back"), "log screen");
+    await waitForFrame(setup, (frame) => frame.includes("live · y yank · esc back"), "log screen");
     const paused = fetchGraphCalls.length;
     await Bun.sleep(80);
     await setup.renderOnce();
@@ -1232,3 +1233,184 @@ test("Enter on a retried card opens attempts, then log, and Esc returns through 
   }
 });
 
+/**
+ * Replace the OpenTUI clipboard writer with a recorder so tests can assert
+ * what would have landed in the operator's clipboard without touching it.
+ * `copyPlainText` stays real (its call-through spy keeps the empty-text guard
+ * under test).
+ */
+function recordClipboardWrites() {
+  const writes: string[] = [];
+  spyOn(clipboardModule, "clipboardWriter").mockImplementation(
+    () => (text: string) => {
+      writes.push(text);
+    },
+  );
+  const copyPlainTextSpy = spyOn(clipboardModule, "copyPlainText");
+  return { writes, copyPlainTextSpy };
+}
+
+/**
+ * Drive a mouse drag explicitly as down → move → up. A single motion step is
+ * enough for these assertions and keeps the mock parser from losing the
+ * release when React re-renders mid-drag.
+ */
+async function dragOver(
+  setup: Awaited<ReturnType<typeof testRender>>,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+) {
+  await setup.mockMouse.pressDown(start.x, start.y);
+  await setup.mockMouse.moveTo(end.x, end.y);
+  await setup.mockMouse.release(end.x, end.y);
+}
+
+async function openLog(
+  setup: Awaited<ReturnType<typeof testRender>>,
+  body: string,
+) {
+  await openGraph(setup);
+  traceStdout = new TextEncoder().encode(body);
+  setup.mockInput.pressEnter();
+  return waitForFrame(
+    setup,
+    (frame) => frame.includes("y yank") && frame.includes(body.split("\n")[0] ?? ""),
+    "log screen with trace body",
+  );
+}
+
+function errorLine(frame: string) {
+  const lines = frame.split("\n");
+  const row = lines.findIndex((line) => line.includes("ERROR: boom"));
+  return { row, col: (lines[row] ?? "").indexOf("ERROR") };
+}
+
+test("mouse drag on the log copies the selected trace text without chrome", async () => {
+  const { writes } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    const frame = await openLog(setup, "ERROR: boom\nSECOND: line\n");
+    const { row, col } = errorLine(frame);
+    expect(row).toBeGreaterThan(-1);
+    expect(col).toBeGreaterThan(-1);
+
+    await dragOver(setup, { x: col, y: row }, { x: col + 4, y: row });
+    await waitFor(() => writes.length > 0, "clipboard write after the drag");
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toContain("ERROR");
+    expect(writes[0]).not.toContain("y yank");
+    expect(writes[0]).not.toContain("log build");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("mouse drag on the graph does not copy log text", async () => {
+  const { writes } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    await openGraph(setup);
+    await dragOver(setup, { x: 2, y: 2 }, { x: 6, y: 2 });
+    await setup.renderOnce();
+    await Bun.sleep(20);
+    expect(writes).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("mouse drag with an empty selection leaves the clipboard alone", async () => {
+  const { writes } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    const frame = await openLog(setup, "ERROR: boom\n");
+    const { row, col } = errorLine(frame);
+    // A single press/release on one cell selects no characters.
+    await setup.mockMouse.pressDown(col, row);
+    await setup.mockMouse.release(col, row);
+    await setup.renderOnce();
+    await Bun.sleep(20);
+    expect(writes).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("y on the log yanks the whole retained buffer and names itself in the footer", async () => {
+  const { writes, copyPlainTextSpy } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    const body = "ERROR: boom\nSECOND: line\n";
+    const frame = await openLog(setup, body);
+    expect(frame).toContain("ended · y yank · esc back");
+
+    setup.mockInput.pressKey("y");
+    await waitFor(() => writes.length > 0, "clipboard write after y");
+    expect(copyPlainTextSpy).toHaveBeenCalledWith(body, expect.anything());
+    expect(writes).toEqual([body]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("y while the log is still waiting leaves the clipboard alone", async () => {
+  const { writes } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    await openGraph(setup);
+    traceStaysLive = true;
+    setup.mockInput.pressEnter();
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("waiting for glab ci trace…") && frame.includes("live · y yank"),
+      "waiting log screen",
+    );
+    setup.mockInput.pressKey("y");
+    await setup.renderOnce();
+    await Bun.sleep(20);
+    expect(writes).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("y on the graph does not copy log text", async () => {
+  const { writes } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    await openGraph(setup);
+    setup.mockInput.pressKey("y");
+    await setup.renderOnce();
+    await Bun.sleep(20);
+    expect(writes).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("log chrome is not selectable, so a drag starting on it copies nothing", async () => {
+  const { writes } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    const frame = await openLog(setup, "ERROR: boom\nSECOND: line\n");
+    const lines = frame.split("\n");
+    const titleRow = lines.findIndex((line) => line.includes("log build"));
+    const footerRow = lines.findIndex((line) => line.includes("y yank"));
+    const { row: bodyRow, col } = errorLine(frame);
+    expect(titleRow).toBeGreaterThan(-1);
+    expect(footerRow).toBeGreaterThan(bodyRow);
+
+    // Title (border chrome) and keymap footer are not selectable.
+    for (const chromeRow of [titleRow, footerRow]) {
+      await setup.mockMouse.pressDown(col, chromeRow);
+      await setup.mockMouse.moveTo(col + 2, bodyRow);
+      await setup.mockMouse.release(col + 2, bodyRow);
+      await setup.renderOnce();
+      await Bun.sleep(20);
+      expect(writes).toEqual([]);
+    }
+  } finally {
+    setup.renderer.destroy();
+  }
+});
