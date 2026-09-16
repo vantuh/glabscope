@@ -7,6 +7,7 @@ import * as traceModule from "./glab/trace.ts";
 import * as retryModule from "./glab/retry.ts";
 import * as clipboardModule from "./clipboard.ts";
 import { RateLimitedError } from "./glab/ratelimit.ts";
+import { IDLE_POLL_MS, NORMAL_POLL_MS } from "./polling.ts";
 import type { PipelineRow } from "./glab/list.ts";
 
 const fetchGraphCalls: string[] = [];
@@ -658,7 +659,7 @@ function capturePollTimers() {
   ) => {
     scheduled.push(timeout ?? 0);
     // Compress poll cadence: the 4s active interval fires within ~20ms;
-    // 5s watch and longer backoff delays fire within ~100ms. Raw delays
+    // watch and longer backoff delays fire within ~100ms. Raw delays
     // stay readable for assertions.
     const ms = (timeout ?? 0) >= 5000 ? 100 : Math.min(timeout ?? 0, 20);
     return realSetTimeout(handler, ms, ...args);
@@ -703,7 +704,7 @@ test("list refresh slows to the watch interval once every visible row is termina
     await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
     await waitFor(() => listCalls >= 2, "refresh with terminal results");
     // The loop keeps watching at the slow interval instead of stopping.
-    await waitFor(() => pollDelays(scheduled).includes(5000), "watch interval scheduled");
+    await waitFor(() => pollDelays(scheduled).includes(IDLE_POLL_MS), "watch interval scheduled");
     const during = listCalls;
     await Bun.sleep(250);
     expect(listCalls).toBeGreaterThan(during);
@@ -724,8 +725,8 @@ test("watch refresh discovers a new pipeline started while everything was termin
       (frame) => frame.includes("#45") && frame.includes("running"),
       "newly started pipeline discovered",
     );
-    expect(pollDelays(scheduled)[0]).toBe(5000);
-    expect(pollDelays(scheduled)[1]).toBe(4000);
+    expect(pollDelays(scheduled)[0]).toBe(IDLE_POLL_MS);
+    expect(pollDelays(scheduled)[1]).toBe(NORMAL_POLL_MS);
   } finally {
     setup.renderer.destroy();
   }
@@ -878,7 +879,7 @@ test("graph polling pauses during logs, resumes on return, and slows to the watc
     await waitFor(() => fetchGraphCalls.length >= paused + 2, "resumed polling");
     // A terminal refresh slows the loop to the watch interval; polling keeps
     // going so externally retried jobs still appear.
-    await waitFor(() => pollDelays(scheduled).includes(5000), "watch interval scheduled");
+    await waitFor(() => pollDelays(scheduled).includes(IDLE_POLL_MS), "watch interval scheduled");
     const during = fetchGraphCalls.length;
     await Bun.sleep(250);
     expect(fetchGraphCalls.length).toBeGreaterThan(during);
@@ -1159,7 +1160,7 @@ test("watch refresh discovers a job retried while the pipeline was terminal", as
     await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
     setup.mockInput.pressEnter();
     await waitForFrame(setup, (frame) => frame.includes("build"), "terminal graph");
-    await waitFor(() => pollDelays(scheduled).includes(5000), "watch interval scheduled");
+    await waitFor(() => pollDelays(scheduled).includes(IDLE_POLL_MS), "watch interval scheduled");
     const callsBefore = fetchGraphCalls.length;
     graphScript = [
       graphFor("RUNNING", [
@@ -1177,7 +1178,11 @@ test("watch refresh discovers a job retried while the pipeline was terminal", as
       "retried job collapsed to latest card",
     );
     await waitFor(
-      () => pollDelays(scheduled).some((delay, index) => delay === 5000 && pollDelays(scheduled)[index + 1] === 4000),
+      () =>
+        pollDelays(scheduled).some(
+          (delay, index) =>
+            delay === IDLE_POLL_MS && pollDelays(scheduled)[index + 1] === NORMAL_POLL_MS,
+        ),
       "interval back to normal after discovery",
     );
   } finally {
