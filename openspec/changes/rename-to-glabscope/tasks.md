@@ -4,7 +4,7 @@
 
 ## 2. Public Documentation
 
-- [ ] 2.1 Rewrite `README.md` as a polished public landing page for glabscope with its pitch, current features, prerequisites, setup and launch instructions, controls, glab-based operation, and unofficial-project disclaimer; verify every documented command and key matches the current package scripts and application behavior
+- [x] 2.1 Rewrite `README.md` as a polished public landing page for glabscope with its pitch, current features, prerequisites, setup and launch instructions, controls, glab-based operation, and unofficial-project disclaimer; verify every documented command and key matches the current package scripts and application behavior
 
 ## 3. Verification
 
