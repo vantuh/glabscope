@@ -19,6 +19,7 @@ function job(
     stage: "test",
     needsNames,
     isBridge: kind === "BRIDGE",
+    retried: false,
   };
 }
 
