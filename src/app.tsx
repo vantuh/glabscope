@@ -5,7 +5,7 @@ import {
   emptyModel,
   focusedAttempt,
   focusedJob,
-  pendingJobAction,
+  jobActionKind,
   reduce,
   selectedPipeline,
   shouldPollGraph,
@@ -342,6 +342,15 @@ export function App() {
    * without restarting the loop or fetching a second time.
    */
   const graphWatchRef = useRef<{ isSlow: () => boolean; wake: () => void } | null>(null);
+  /**
+   * A prompt this frame's keys asked for, before the reducer's answer has
+   * rendered. Without it, two keys in one frame both read a model with no
+   * prompt and the second one acts on the screen behind it.
+   */
+  const promptAskedRef = useRef(false);
+  // Cleared by every render, so the latch only ever covers the frame that set
+  // it (the same shape as the navigating mirror above).
+  promptAskedRef.current = false;
   /** The pipeline on screen now, read when a job action settles. */
   const graphIidRef = useRef(model.graph?.iid);
   graphIidRef.current = model.graph?.iid;
@@ -666,6 +675,21 @@ export function App() {
     };
 
   /**
+   * Ask the reducer for a job action's prompt. The synchronous latch keeps this
+   * frame's remaining keys out, and the preconditions mirror the reducer's so a
+   * request that opens nothing cannot leave the latch set.
+   */
+  const askJobAction = (job: JobNode) => {
+    if (model.retry || model.confirm || model.manualRefresh) {
+      return;
+    }
+    if (jobActionKind(job, model.screen)) {
+      promptAskedRef.current = true;
+    }
+    dispatch({ type: "requestJobAction", job });
+  };
+
+  /**
    * The one place a job action reaches GitLab, driven by the reducer's
    * committed in-flight action rather than by a key handler: the process and
    * the state can never disagree, a refresh that lands before the confirmation
@@ -698,12 +722,16 @@ export function App() {
     }
     // An open confirmation owns the keyboard: nothing behind it may move, and
     // escape answers the prompt instead of going back a screen. Whether the
-    // confirmation still holds is the reducer's call.
-    if (model.confirm) {
-      if (key.name === "return") {
-        dispatch({ type: "confirmJobAction" });
-      } else if (key.name === "escape") {
-        dispatch({ type: "cancelJobAction" });
+    // confirmation still holds is the reducer's call. A prompt asked for in
+    // this very frame counts as open, so its own frame's keys cannot slip past
+    // it and start a refresh, a log, a move or a back action.
+    if (model.confirm || promptAskedRef.current) {
+      if (model.confirm) {
+        if (key.name === "return") {
+          dispatch({ type: "confirmJobAction" });
+        } else if (key.name === "escape") {
+          dispatch({ type: "cancelJobAction" });
+        }
       }
       return;
     }
@@ -765,7 +793,7 @@ export function App() {
       if (isRetryKey(key) && navigatingRef.current === null) {
         const job = focusedJob(model);
         if (job) {
-          dispatch({ type: "requestJobAction", job });
+          askJobAction(job);
         }
       }
       if (model.graph && key.name === "r" && !key.ctrl && navigatingRef.current === null && !model.manualRefresh) {
@@ -823,7 +851,7 @@ export function App() {
       // to whatever the stale graph still focuses would retry the attempt that
       // was just replaced.
       if (traced && traced.numericId === model.logJobId) {
-        dispatch({ type: "requestJobAction", job: traced });
+        askJobAction(traced);
       } else {
         dispatch({
           type: "retryFailed",
@@ -837,7 +865,7 @@ export function App() {
       if (isRetryKey(key) && navigatingRef.current === null) {
         const attempt = focusedAttempt(model);
         if (attempt) {
-          dispatch({ type: "requestJobAction", job: attempt });
+          askJobAction(attempt);
         }
       }
       if (key.name === "up") {

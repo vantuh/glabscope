@@ -3091,3 +3091,69 @@ test("an action settling after another pipeline was opened leaves that pipeline 
     setup.renderer.destroy();
   }
 });
+
+test("keys pressed in the request's own frame never reach the screen behind the prompt", async () => {
+  graphGate.resolve(
+    graphFor("FAILED", [
+      { ...jobIn("lint", "10", "failed"), stage: "test" },
+      jobIn("build", "11", "success"),
+    ]),
+  );
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    await waitForFrame(setup, (f) => focusedCard(f, statusIcon("failed"), "lint"), "lint focused");
+    const callsBefore = fetchGraphCalls.length;
+
+    // A refresh, a movement and a back key, all before the prompt has rendered.
+    setup.mockInput.pressKey("r", { ctrl: true });
+    setup.mockInput.pressKey("r");
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    setup.mockInput.pressEscape();
+    const frame = await waitForFrame(
+      setup,
+      (f) => f.includes("enter confirm"),
+      "prompt after the batched keys",
+    );
+    expect(frame).toContain("retry job lint?");
+    expect(frame).toContain("enter confirm");
+    expect(frame).not.toContain("Refreshing…");
+    expect(frame).toContain("pipeline 5");
+    expect(focusedCard(frame, statusIcon("failed"), "lint")).toBe(true);
+    expect(fetchGraphCalls.length).toBe(callsBefore);
+    expect(retryCalls).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a key pressed in the request's own frame does not open the log or start anything", async () => {
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 80, height: 14 });
+  try {
+    await openFailedGraph(setup);
+    const spawnsBefore = spawnCalls;
+    setup.mockInput.pressKey("r", { ctrl: true });
+    setup.mockInput.pressEnter();
+    const frame = await waitForFrame(
+      setup,
+      (f) => f.includes("enter confirm"),
+      "prompt after the batched keys",
+    );
+    expect(frame).toContain("enter confirm");
+    expect(frame).toContain("pipeline 5");
+    expect(spawnCalls).toBe(spawnsBefore);
+    expect(retryCalls).toEqual([]);
+
+    // The prompt is still answerable once it has committed.
+    setup.mockInput.pressEscape();
+    await waitForFrame(
+      setup,
+      (f) => !f.includes("enter confirm") && !f.includes("log build"),
+      "back to the graph",
+    );
+    expect(retryCalls).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});

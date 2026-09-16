@@ -69,7 +69,7 @@ This also keeps the log screen honest: a manual traced job yields `null` there, 
 
 **6. The refresh and focus path is retry's, unchanged.**
 
-A successful run dispatches `retrySucceeded` with the id the CLI printed and then `refreshGraphAfterRetry(iid)`, so the graph fetches once, newest-wins ordering still applies, and focus stays on the same job: by id in the normal in-place enqueue case, or by job name+stage through the existing `visibleMatchIndex` fallback if GitLab answered with a different attempt. The pipeline turning active again is what restores the normal polling interval, because the graph loop derives its delay from the refreshed pipeline status; no polling code changes. The follow-up fetch is also bound to the pipeline the action belongs to — the resolve path compares the pipeline on screen against the action's own — so an action that settles after the operator opened another pipeline cannot put the first pipeline's graph back (see review follow-up 7.8).
+A successful run dispatches `retrySucceeded` with the id the CLI printed and then `refreshGraphAfterRetry(iid)`, so the graph fetches once, newest-wins ordering still applies, and focus stays on the same job: by id in the normal in-place enqueue case, or by job name+stage through the existing `visibleMatchIndex` fallback if GitLab answered with a different attempt. The pipeline turning active again is what restores the normal polling interval, because the graph loop derives its delay from the refreshed pipeline status, with the one cadence adjustment decision 10 describes. The follow-up fetch is also bound to the pipeline the action belongs to — the resolve path compares the pipeline on screen against the action's own — so an action that settles after the operator opened another pipeline cannot put the first pipeline's graph back (see review follow-up 7.8).
 
 **7. The graph footer names both actions.**
 
@@ -99,12 +99,6 @@ The prompt state lives in the model rather than in component state so that "one 
 
 A job that disappeared, changed action, or no longer qualifies produces a non-fatal notice instead of a command: `that job is no longer in this pipeline`, `that job's status changed while the prompt was open`, or the action's own refusal message. The graph keeps polling while the prompt is open, so a manual job another operator already started must not be played again, and GitLab answers a play on an enqueued job with its invalid-transition fallback, which would create a second attempt.
 
-**11. A refresh from outside the graph loop can pull the pending wait back to the normal interval.**
-
-The graph loop keeps its cadence in closure state and only recomputes it in its own `tick()`, so a run on a terminal pipeline would otherwise leave the already-scheduled watch-interval timer running: the post-action refresh reports a running pipeline, and the operator then waits out up to the whole watch interval before normal polling resumes.
-
-The loop publishes `{ isSlow, wake }` through a ref, and an effect on the committed pipeline status calls `wake()` when the pipeline just became active while the pending delay is slower than normal. `wake()` reschedules the pending timer at `NORMAL_POLL_MS` instead of fetching immediately, which keeps the property the retry change established — exactly one graph fetch per job action — and leaves rate-limit backoff untouched, because a wake only fires on a transition into an active pipeline.
-
 **10. The prompt is an overlay inside the existing content box, and it owns the keyboard while it is open.**
 
 A `ConfirmPrompt` renders like `LoadingOverlay` — absolutely positioned inside `ScreenPanel`'s content box, above the screen's own content — but with two lines: the question (`retry job <name>?`, `run job <name>?`) and its keys (`enter confirm  esc cancel`). The question uses the help gray and the keys the frame gray, so the prompt reads as chrome; the success, failed and running-or-pending colors stay reserved for job state. (In this codebase the help gray is the same hex as the `other` bucket, which is why the requirement names the three state-carrying colors instead of all four buckets.) `ScreenPanel` gains an optional prompt node next to its existing `loadingLabel`, and the graph, attempts and log panels pass it from `model.confirm`.
@@ -114,6 +108,14 @@ The prompt outranks the log-loading overlay in z-order, and the request is refus
 The prompt is not transient status, so it stays out of the chrome status area and the key-help line keeps listing the screen's own keys, which is what the screen-chrome requirement already demands.
 
 Key handling adds one branch ahead of the per-screen handlers and, importantly, ahead of the global `escape` → back branch: while a prompt is open, `enter` confirms and `escape` cancels, every other key is swallowed except `q`, which still quits because quitting changes no GitLab state and is handled first today.
+
+That branch also answers to a synchronous latch, not only to the committed `confirm` state. React only redraws after the frame's events, so a `ctrl+r` and a following key in the same frame would both read a model without a prompt and the second one would start a refresh fetch, open a log, move focus or go back. `askJobAction` sets the latch only when the gate says a prompt is coming (the same preconditions the reducer checks, so a request that opens nothing cannot leave it set), and every render clears it, so it covers exactly the frame that set it. The latch swallows `enter` too: the prompt it belongs to has not committed yet, and the operator's next `enter` answers the visible prompt.
+
+**11. A refresh from outside the graph loop can pull the pending wait back to the normal interval.**
+
+The graph loop keeps its cadence in closure state and only recomputes it in its own `tick()`, so a run on a terminal pipeline would otherwise leave the already-scheduled watch-interval timer running: the post-action refresh reports a running pipeline, and the operator then waits out up to the whole watch interval before normal polling resumes.
+
+The loop publishes `{ isSlow, wake }` through a ref, and an effect on the committed pipeline status calls `wake()` when the pipeline just became active while the pending delay is slower than normal. `wake()` reschedules the pending timer at `NORMAL_POLL_MS` instead of fetching immediately, which keeps the property the retry change established — exactly one graph fetch per job action — and leaves rate-limit backoff untouched, because a wake only fires on a transition into an active pipeline.
 
 ## Risks / Trade-offs
 
