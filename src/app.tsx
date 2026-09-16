@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import {
   emptyModel,
+  focusedAttempt,
   focusedJob,
   reduce,
   selectedPipeline,
@@ -14,11 +15,17 @@ import { IDLE_POLL_MS, NORMAL_POLL_MS, nextPollDelay } from "./polling.ts";
 import { isQuitKey } from "./keys.ts";
 import { probeGlab } from "./glab/probe.ts";
 import { listPipelines } from "./glab/list.ts";
-import { fetchPipelineGraph, NeedsUnavailableError } from "./glab/graph.ts";
+import { fetchPipelineGraph, jobAttempts, NeedsUnavailableError, type JobNode } from "./glab/graph.ts";
 import { RateLimitedError } from "./glab/ratelimit.ts";
 import { spawnTrace } from "./glab/trace.ts";
-import { BUCKET_COLOR, isActivePipelineStatus } from "./status.ts";
-import { buildDag, formatJobLine, visualJobs } from "./layout/dag.ts";
+import { BUCKET_COLOR, isActivePipelineStatus, statusIcon } from "./status.ts";
+import {
+  buildStageGraph,
+  moveFocus,
+  paintConnectorStrips,
+  type StageColumn,
+} from "./layout/stage-graph.ts";
+import type { DagEdge } from "./layout/dag.ts";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const CHROME_COLOR = "#4b5563";
@@ -83,6 +90,65 @@ function RefreshStatus({ label }: { label: string }) {
   );
 }
 
+const FOCUS_BORDER = "#e5e7eb";
+
+function JobCard({ job, focused }: { job: JobNode; focused: boolean }) {
+  return (
+    <box
+      id={job.id}
+      border
+      borderStyle="rounded"
+      borderColor={focused ? FOCUS_BORDER : CHROME_COLOR}
+      padding={0}
+      flexShrink={0}
+    >
+      <text fg={BUCKET_COLOR[job.bucket]}>
+        {focused ? "▸ " : "  "}
+        {statusIcon(job.status)} {job.name}
+      </text>
+    </box>
+  );
+}
+
+export function GraphBody({
+  columns,
+  edges,
+  focusedId,
+}: {
+  columns: StageColumn[];
+  edges: DagEdge[];
+  focusedId: string | undefined;
+}) {
+  const strips = paintConnectorStrips(columns, edges);
+  return (
+    <box flexDirection="row" flexShrink={0}>
+      {columns.map((col, index) => {
+        const strip = strips[index] ?? [];
+        const stripUsed = strip.some((line) => line.trim().length > 0);
+        return (
+          <box key={`${col.name}-${index}`} flexDirection="row" flexShrink={0}>
+            <box flexDirection="column" flexShrink={0}>
+              <text fg={HELP_COLOR}>{col.name}</text>
+              {col.jobs.map((job) => (
+                <JobCard key={job.id} job={job} focused={job.id === focusedId} />
+              ))}
+            </box>
+            {stripUsed ? (
+              <box flexDirection="column" flexShrink={0}>
+                {strip.map((line, row) => (
+                  <text key={row} fg={CHROME_COLOR}>
+                    {line}
+                  </text>
+                ))}
+              </box>
+            ) : null}
+          </box>
+        );
+      })}
+    </box>
+  );
+}
+
 function LoadingOverlay({ label }: { label: string }) {
   const frame = useSpinnerFrame();
 
@@ -110,8 +176,17 @@ export function App() {
   const [model, dispatch] = useReducer(reduce, emptyModel);
   const [refreshing, setRefreshing] = useState<"list" | "graph" | null>(null);
   const logProc = useRef<ReturnType<typeof Bun.spawn> | null>(null);
+  const graphScrollRef = useRef<ScrollBoxRenderable>(null);
   const navigatingRef = useRef(model.navigating);
   navigatingRef.current = model.navigating;
+  const focusedId = focusedJob(model)?.id;
+
+  useEffect(() => {
+    if (model.screen !== "graph" || !focusedId) {
+      return;
+    }
+    graphScrollRef.current?.scrollChildIntoView(focusedId);
+  }, [model.screen, focusedId]);
 
   useEffect(() => {
     void (async () => {
@@ -312,8 +387,8 @@ export function App() {
     };
   }, [traceJobId]);
 
-  const dag = useMemo(
-    () => (model.graph ? buildDag(model.graph.jobs) : null),
+  const stageGraph = useMemo(
+    () => (model.graph ? buildStageGraph(model.graph.jobs, model.graph.stageNames) : null),
     [model.graph],
   );
 
@@ -375,7 +450,7 @@ export function App() {
           );
       }
     }
-    if (model.screen === "graph" && dag) {
+    if (model.screen === "graph" && stageGraph) {
       if (model.graph && key.name === "r" && navigatingRef.current === null && !model.manualRefresh) {
         dispatch({ type: "manualRefresh", target: "graph" });
         void fetchPipelineGraph(model.graph.iid)
@@ -387,19 +462,18 @@ export function App() {
             }),
           );
       }
-      const order = visualJobs(dag);
       const currentId = focusedJob(model)?.id;
-      const index = Math.max(0, order.findIndex((job) => job.id === currentId));
-      if (key.name === "up" || key.name === "left") {
-        const next = order[index - 1];
-        if (next) {
-          dispatch({ type: "focusJob", id: next.id });
-        }
-      }
-      if (key.name === "down" || key.name === "right") {
-        const next = order[index + 1];
-        if (next) {
-          dispatch({ type: "focusJob", id: next.id });
+      if (
+        key.name === "up" ||
+        key.name === "down" ||
+        key.name === "left" ||
+        key.name === "right"
+      ) {
+        key.preventDefault();
+        key.stopPropagation();
+        const next = moveFocus(stageGraph.columns, currentId, key.name);
+        if (next && next !== currentId) {
+          dispatch({ type: "focusJob", id: next });
         }
       }
       if (key.name === "return") {
@@ -407,6 +481,39 @@ export function App() {
           return;
         }
         const job = focusedJob(model);
+        if (!job || !model.graph) {
+          return;
+        }
+        if (jobAttempts(model.graph.jobs, job).length > 1) {
+          dispatch({ type: "openAttempts" });
+          return;
+        }
+        navigatingRef.current = { kind: "logs", jobId: job.numericId };
+        dispatch({ type: "openLogs" });
+      }
+    }
+    if (model.screen === "attempts" && model.graph) {
+      const card = focusedJob(model);
+      const attempts = card ? jobAttempts(model.graph.jobs, card) : [];
+      if (key.name === "up") {
+        const index = attempts.findIndex((job) => job.id === focusedAttempt(model)?.id);
+        const next = attempts[index - 1];
+        if (next) {
+          dispatch({ type: "focusAttempt", id: next.id });
+        }
+      }
+      if (key.name === "down") {
+        const index = attempts.findIndex((job) => job.id === focusedAttempt(model)?.id);
+        const next = attempts[index + 1];
+        if (next) {
+          dispatch({ type: "focusAttempt", id: next.id });
+        }
+      }
+      if (key.name === "return") {
+        if (navigatingRef.current !== null) {
+          return;
+        }
+        const job = focusedAttempt(model);
         if (!job) {
           return;
         }
@@ -459,8 +566,38 @@ export function App() {
     );
   }
 
+  if (model.screen === "attempts") {
+    const card = focusedJob(model);
+    const attempts =
+      card && model.graph ? jobAttempts(model.graph.jobs, card) : [];
+    return (
+      <ScreenPanel
+        title={`attempts ${card?.name ?? "job"}`}
+        footer="enter log  esc graph  q quit"
+        status={refreshing === "graph" ? <RefreshStatus label="refreshing…" /> : undefined}
+        loadingLabel={
+          model.navigating?.kind === "logs"
+            ? "Loading log…"
+            : model.manualRefresh === "graph"
+              ? "Refreshing…"
+              : undefined
+        }
+      >
+        {model.refreshWarning ? (
+          <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
+        ) : null}
+        <scrollbox focused flexGrow={1}>
+          {attempts.map((job, index) => (
+            <text key={job.id} fg={BUCKET_COLOR[job.bucket]}>
+              {index === model.focusedAttemptIndex ? ">" : " "} {statusIcon(job.status)} #{job.numericId}  {job.status}
+            </text>
+          ))}
+        </scrollbox>
+      </ScreenPanel>
+    );
+  }
+
   if (model.screen === "graph") {
-    const focusedId = focusedJob(model)?.id;
     return (
       <ScreenPanel
         title={`pipeline ${model.graph?.iid ?? ""}`}
@@ -478,14 +615,14 @@ export function App() {
           <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
         ) : null}
         {model.graph?.truncated ? <text fg="#eab308">job list truncated at 100</text> : null}
-        <scrollbox focused flexGrow={1}>
-          {dag
-            ? visualJobs(dag).map((job) => (
-                <text key={job.id} fg={BUCKET_COLOR[job.bucket]}>
-                  {formatJobLine(job, focusedId)}
-                </text>
-              ))
-            : null}
+        <scrollbox ref={graphScrollRef} flexGrow={1}>
+          {stageGraph ? (
+            <GraphBody
+              columns={stageGraph.columns}
+              edges={stageGraph.edges}
+              focusedId={focusedId}
+            />
+          ) : null}
         </scrollbox>
       </ScreenPanel>
     );

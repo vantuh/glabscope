@@ -37,8 +37,10 @@ function sampleGraph(): PipelineGraph {
         stage: "build",
         needsNames: [],
         isBridge: false,
+        retried: false,
       },
     ],
+    stageNames: ["build"],
     truncated: false,
   };
 }
@@ -76,7 +78,11 @@ function fakeProc(): ReturnType<typeof Bun.spawn> {
 
 import type { CapturedSpan } from "@opentui/core";
 import { testRender } from "@opentui/react/test-utils";
-import { App, ScreenPanel } from "./app.tsx";
+import { App, GraphBody, ScreenPanel } from "./app.tsx";
+import { buildStageGraph } from "./layout/stage-graph.ts";
+import fixture from "./fixtures/pipeline-jobs-needs.json";
+import { parsePipelineGraph } from "./glab/graph.ts";
+import { statusIcon } from "./status.ts";
 
 async function waitForFrame(
   setup: Awaited<ReturnType<typeof testRender>>,
@@ -120,8 +126,8 @@ function hasDimmedPanelBody(setup: Awaited<ReturnType<typeof testRender>>) {
     (line) => line.includes("enter graph") || line.includes("arrows move"),
   );
   const top = lines.findIndex((line) => line.includes("╭"));
-  const bottom = lines.findIndex((line) => line.includes("╰"));
   const leftCol = lines[top]?.indexOf("╭") ?? -1;
+  const bottom = lines.findLastIndex((line) => leftCol >= 0 && line[leftCol] === "╰");
   const rightCol = lines[top]?.lastIndexOf("╮") ?? -1;
   const bordersUndimmed =
     leftCol >= 0 &&
@@ -167,7 +173,7 @@ async function mountApp() {
 async function openGraph(setup: Awaited<ReturnType<typeof testRender>>) {
   setup.mockInput.pressEnter();
   graphGate.resolve(sampleGraph());
-  const frame = await waitForFrame(setup, (frame) => frame.includes("[build]"), "graph screen");
+  const frame = await waitForFrame(setup, (frame) => frame.includes("build"), "graph screen");
   expect(frame).toContain("pipeline 5");
   expect(frame).toMatch(/[╭╮╰╯]/);
 }
@@ -321,7 +327,7 @@ test("list shows an animated loading line inside its frame before the graph fetc
     expect(lines.findIndex((line) => line.includes("pipelines"))).toBeLessThan(
       lines.findIndex((line) => line.includes("Loading pipeline…")),
     );
-    expect(frame).not.toContain("[build]");
+    expect(frame).not.toContain("build");
 
     const firstSpinner = frame.match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/)?.[0];
     let nextSpinner = firstSpinner;
@@ -361,7 +367,7 @@ test("graph fetch failure clears loading and allows retry", async () => {
     graphGate = Promise.withResolvers();
     setup.mockInput.pressEnter();
     graphGate.resolve(sampleGraph());
-    await waitForFrame(setup, (text) => text.includes("[build]"), "graph screen");
+    await waitForFrame(setup, (text) => text.includes("build"), "graph screen");
     expect(fetchGraphCalls).toEqual(["5", "5"]);
   } finally {
     graphGate.resolve(sampleGraph());
@@ -418,7 +424,7 @@ test("spawn failure clears loading and shows the error screen", async () => {
     expect(frame).not.toContain("log…");
 
     setup.mockInput.pressEscape();
-    await waitForFrame(setup, (text) => text.includes("[build]"), "graph screen");
+    await waitForFrame(setup, (text) => text.includes("build"), "graph screen");
     spawnShouldThrow = false;
     setup.mockInput.pressEnter();
     await waitForFrame(
@@ -489,7 +495,7 @@ test("graph shows an animated loading line inside its frame before the log scree
         expect(frame).toContain("log…");
         expect(frame).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
         expect(frame).toMatch(/[╭╮╰╯]/);
-        expect(frame).toContain("[build]");
+        expect(frame).toContain("build");
         expect(hasDimmedPanelBody(setup)).toBe(true);
         const lines = frame.split("\n");
         expect(lines.findIndex((line) => line.includes("pipeline 5"))).toBeLessThan(
@@ -545,6 +551,7 @@ function jobIn(name: string, numericId: string, status: string): PipelineGraph["
     stage: "build",
     needsNames: [],
     isBridge: false,
+    retried: false,
   };
 }
 
@@ -554,6 +561,7 @@ function graphFor(status: string, jobs: PipelineGraph["jobs"]): PipelineGraph {
     iid: "5",
     status,
     jobs,
+    stageNames: [...new Set(jobs.map((job) => job.stage).filter(Boolean))],
     truncated: false,
   };
 }
@@ -612,7 +620,7 @@ test("list with a running pipeline refreshes immediately, keeps scheduling, and 
 
     graphGate.resolve(sampleGraph());
     setup.mockInput.pressEnter();
-    await waitForFrame(setup, (frame) => frame.includes("[build]"), "graph screen");
+    await waitForFrame(setup, (frame) => frame.includes("build"), "graph screen");
     const afterLeave = listCalls;
     await Bun.sleep(80);
     await setup.renderOnce();
@@ -755,13 +763,13 @@ test("graph polling updates job status and recovers from an ordinary failure", a
   try {
     await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
     setup.mockInput.pressEnter();
-    await waitForFrame(setup, (frame) => frame.includes("[build]"), "running graph");
+    await waitForFrame(setup, (frame) => frame.includes("build"), "running graph");
     expect(fetchGraphCalls.length).toBeGreaterThanOrEqual(2);
 
     graphScript = [new Error("graphql failed"), new Error("graphql failed")];
     await waitForFrame(
       setup,
-      (frame) => frame.includes("graphql failed") && frame.includes("[build]"),
+      (frame) => frame.includes("graphql failed") && frame.includes("build"),
       "non-fatal refresh warning beside the retained graph",
     );
 
@@ -770,7 +778,7 @@ test("graph polling updates job status and recovers from an ordinary failure", a
     const buildSpan = setup
       .captureSpans()
       .lines.flatMap((line) => line.spans)
-      .find((span) => span.text.includes("[build]"));
+      .find((span) => span.text.includes("build") && span.fg.toInts()[1] === 197);
     expect(buildSpan?.fg.toInts()).toEqual([34, 197, 94, 255]);
     expect(fetchGraphCalls.length).toBeGreaterThanOrEqual(4);
   } finally {
@@ -786,7 +794,7 @@ test("graph polling pauses during logs, resumes on return, and slows to the watc
   try {
     await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
     setup.mockInput.pressEnter();
-    await waitForFrame(setup, (frame) => frame.includes("[build]"), "running graph");
+    await waitForFrame(setup, (frame) => frame.includes("build"), "running graph");
     await waitFor(() => fetchGraphCalls.length >= 2, "graph polling started");
 
     traceStaysLive = true;
@@ -802,7 +810,7 @@ test("graph polling pauses during logs, resumes on return, and slows to the watc
       graphFor("SUCCESS", [jobIn("build", "99", "success")]),
     ];
     setup.mockInput.pressEscape();
-    await waitForFrame(setup, (frame) => frame.includes("[build]"), "graph after return");
+    await waitForFrame(setup, (frame) => frame.includes("build"), "graph after return");
     await waitFor(() => fetchGraphCalls.length >= paused + 2, "resumed polling");
     // A terminal refresh slows the loop to the watch interval; polling keeps
     // going so externally retried jobs still appear.
@@ -831,9 +839,19 @@ test("graph refresh backs off on 429, resets after success, and keeps focus acro
   try {
     await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
     setup.mockInput.pressEnter();
-    await waitForFrame(setup, (frame) => frame.includes("[a]"), "running graph");
+    await waitForFrame(
+      setup,
+      (frame) =>
+        frame.includes("pipeline 5") &&
+        frame.split("\n").some((line) => line.includes("▸") && /\ba\b/.test(line)),
+      "running graph",
+    );
     setup.mockInput.pressKey("ARROW_DOWN");
-    await waitForFrame(setup, (frame) => frame.includes(">[b]"), "focused job b");
+    await waitForFrame(
+      setup,
+      (frame) => frame.split("\n").some((line) => line.includes("▸") && /\bb\b/.test(line)),
+      "focused job b",
+    );
 
     graphScript = [
       new RateLimitedError("429 Too Many Requests"),
@@ -851,8 +869,8 @@ test("graph refresh backs off on 429, resets after success, and keeps focus acro
       setup,
       (frame) => {
         const lines = frame.split("\n");
-        const bLine = lines.findIndex((line) => line.includes(">[b]"));
-        const aLine = lines.findIndex((line) => line.includes("[a]"));
+        const bLine = lines.findIndex((line) => line.includes("▸") && /\bb\b/.test(line));
+        const aLine = lines.findIndex((line) => !line.includes("▸") && /\ba\b/.test(line));
         return bLine > -1 && aLine > -1 && bLine < aLine;
       },
       "reordered jobs with preserved focus",
@@ -905,7 +923,7 @@ test("r refetches the graph after polling stopped and shows new jobs", async () 
   try {
     await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
     setup.mockInput.pressEnter();
-    await waitForFrame(setup, (frame) => frame.includes("[build]"), "terminal graph");
+    await waitForFrame(setup, (frame) => frame.includes("build"), "terminal graph");
     const callsBefore = fetchGraphCalls.length;
     graphScript = [
       graphFor("SUCCESS", [
@@ -914,7 +932,7 @@ test("r refetches the graph after polling stopped and shows new jobs", async () 
       ]),
     ];
     setup.mockInput.pressKey("r");
-    await waitForFrame(setup, (frame) => frame.includes("[deploy]"), "graph with retried-in job");
+    await waitForFrame(setup, (frame) => frame.includes("deploy"), "graph with retried-in job");
     expect(fetchGraphCalls.length).toBe(callsBefore + 1);
   } finally {
     setup.renderer.destroy();
@@ -953,18 +971,23 @@ test("watch refresh discovers a job retried while the pipeline was terminal", as
   try {
     await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
     setup.mockInput.pressEnter();
-    await waitForFrame(setup, (frame) => frame.includes("[build]"), "terminal graph");
+    await waitForFrame(setup, (frame) => frame.includes("build"), "terminal graph");
     await waitFor(() => pollDelays(scheduled).includes(5000), "watch interval scheduled");
+    const callsBefore = fetchGraphCalls.length;
     graphScript = [
       graphFor("RUNNING", [
-        jobIn("build", "99", "success"),
+        { ...jobIn("build", "99", "success"), retried: true },
         jobIn("build", "101", "running"),
       ]),
     ];
+    await waitFor(() => fetchGraphCalls.length > callsBefore, "watch refetch after retry");
     await waitForFrame(
       setup,
-      (frame) => frame.includes("[build]") && frame.split("[build]").length >= 3,
-      "retried job attempt discovered",
+      (frame) =>
+        frame.includes("build") &&
+        frame.includes(statusIcon("running")) &&
+        !frame.includes(statusIcon("success")),
+      "retried job collapsed to latest card",
     );
     await waitFor(
       () => pollDelays(scheduled).some((delay, index) => delay === 5000 && pollDelays(scheduled)[index + 1] === 4000),
@@ -974,3 +997,177 @@ test("watch refresh discovers a job retried while the pipeline was terminal", as
     setup.renderer.destroy();
   }
 });
+
+test("two-stage graph renders columns of rounded job cards", async () => {
+  graphGate.resolve(
+    graphFor("SUCCESS", [
+      { ...jobIn("lint", "1", "success"), stage: "test" },
+      { ...jobIn("compile", "2", "failed"), stage: "build" },
+    ]),
+  );
+  const setup = await testRender(<App />, { width: 90, height: 18 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    setup.mockInput.pressEnter();
+    const frame = await waitForFrame(
+      setup,
+      (text) => text.includes("lint") && text.includes("compile"),
+      "two-stage graph",
+    );
+    expect(frame).toMatch(/[╭╮╰╯]/);
+    expect(frame).toContain("▸");
+    expect(frame).toContain("lint");
+    expect(frame).toContain("compile");
+    expect(frame).not.toMatch(/>\[[^\]]+\] <-/);
+    const lintCol = frame.indexOf("lint");
+    const compileCol = frame.indexOf("compile");
+    expect(lintCol).toBeGreaterThan(-1);
+    expect(compileCol).toBeGreaterThan(lintCol);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("GraphBody draws needs arrows and does not invent them for stages-only", async () => {
+  const parsed = parsePipelineGraph(fixture);
+  const graph = buildStageGraph(parsed.jobs, parsed.stageNames);
+  const setup = await testRender(
+    <GraphBody columns={graph.columns} edges={graph.edges} focusedId={parsed.jobs[0]?.id} />,
+    { width: 140, height: 36 },
+  );
+  try {
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("sonarqube");
+    expect(frame).toContain("tests");
+    expect(frame).toMatch(/▶|◀/);
+    const prepareCol = frame.indexOf("prepare");
+    const securityCol = frame.indexOf("security");
+    expect(prepareCol).toBeGreaterThan(-1);
+    expect(securityCol).toBeGreaterThan(prepareCol);
+  } finally {
+    setup.renderer.destroy();
+  }
+
+  const stages = buildStageGraph([
+    { ...jobIn("lint", "1", "success"), stage: "test" },
+    { ...jobIn("compile", "2", "success"), stage: "build" },
+  ]);
+  const setup2 = await testRender(
+    <GraphBody columns={stages.columns} edges={stages.edges} focusedId="gid://gitlab/Ci::Build/1" />,
+    { width: 80, height: 16 },
+  );
+  try {
+    await setup2.renderOnce();
+    const frame = setup2.captureCharFrame();
+    expect(frame).toContain("lint");
+    expect(frame).toContain("compile");
+    expect(frame).not.toMatch(/▶|◀|→|-->/);
+  } finally {
+    setup2.renderer.destroy();
+  }
+});
+
+test("graph keys stay in-stage vertically, change stage horizontally, and Enter/Esc/bridge keep v1 behavior", async () => {
+  graphGate.resolve(
+    graphFor("SUCCESS", [
+      { ...jobIn("lint", "1", "success"), stage: "test" },
+      { ...jobIn("unit", "2", "success"), stage: "test" },
+      { ...jobIn("compile", "3", "success"), stage: "build" },
+      {
+        ...jobIn("trigger-child", "50", "success"),
+        kind: "BRIDGE",
+        isBridge: true,
+        stage: "deploy",
+      },
+    ]),
+  );
+  const setup = await testRender(<App />, { width: 100, height: 22 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    setup.mockInput.pressEnter();
+    const graphFrame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("lint") && frame.includes("trigger-child"),
+      "graph with bridge",
+    );
+    expect((graphFrame.match(/trigger-child/g) ?? []).length).toBe(1);
+
+    setup.mockInput.pressKey("ARROW_DOWN");
+    await waitForFrame(
+      setup,
+      (frame) => frame.split("\n").some((line) => line.includes("▸") && line.includes("unit")),
+      "down stays in test stage",
+    );
+
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    await waitForFrame(
+      setup,
+      (frame) => frame.split("\n").some((line) => line.includes("▸") && line.includes("compile")),
+      "right moves to build stage",
+    );
+
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("log compile"), "log for focused job");
+    expect(spawnCalls).toBe(1);
+
+    setup.mockInput.pressEscape();
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("compile") && frame.includes("pipeline 5"),
+      "esc returns to graph",
+    );
+    setup.mockInput.pressEscape();
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "esc returns to list");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("Enter on a retried card opens attempts, then log, and Esc returns through attempts", async () => {
+  graphGate.resolve(
+    graphFor("SUCCESS", [
+      { ...jobIn("lint", "10", "failed"), retried: true },
+      jobIn("lint", "12", "success"),
+    ]),
+  );
+  const setup = await testRender(<App />, { width: 80, height: 16 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    setup.mockInput.pressEnter();
+    const graphFrame = await waitForFrame(
+      setup,
+      (frame) =>
+        frame.includes("pipeline 5") &&
+        frame.includes("lint") &&
+        (frame.match(/lint/g) ?? []).length === 1,
+      "collapsed retried card",
+    );
+    expect(graphFrame).not.toContain("attempts lint");
+
+    setup.mockInput.pressEnter();
+    const attemptsFrame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("attempts lint") && frame.includes("#12") && frame.includes("#10"),
+      "attempts list",
+    );
+    expect(attemptsFrame).toContain("enter log");
+    expect(spawnCalls).toBe(0);
+
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("log lint"), "log for latest attempt");
+    expect(spawnCalls).toBe(1);
+
+    setup.mockInput.pressEscape();
+    await waitForFrame(setup, (frame) => frame.includes("attempts lint"), "esc to attempts");
+    setup.mockInput.pressEscape();
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("pipeline 5") && frame.includes("lint"),
+      "esc to graph",
+    );
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
