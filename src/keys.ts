@@ -23,3 +23,18 @@ export function isRetryKey(key: KeyChord): boolean {
     !key.super
   );
 }
+
+/**
+ * `o` opens the focused pipeline, job attempt, or traced job in the browser.
+ * OpenTUI reports an uppercase `O` as the same lowercase name with shift set,
+ * so shift is allowed and both behave the same; any other modifier is not.
+ */
+export function isOpenKey(key: KeyChord): boolean {
+  return (
+    key.name === "o" &&
+    !key.ctrl &&
+    !key.meta &&
+    !key.option &&
+    !key.super
+  );
+}
