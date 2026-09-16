@@ -168,7 +168,7 @@ test("a payload without web_url still yields the full path and no web address", 
   }
 });
 
-test("path_with_namespace is still required", async () => {
+test("a payload with no project path at all is an error", async () => {
   const runSpy = spyOn(runModule, "runGlab").mockResolvedValue({
     stdout: JSON.stringify({ web_url: "https://gitlab.example.com/group/project" }),
     stderr: "",
@@ -178,6 +178,66 @@ test("path_with_namespace is still required", async () => {
     await expect(projectInfo("/tmp/glabscope-missing-path")).rejects.toThrow(
       "path_with_namespace",
     );
+  } finally {
+    runSpy.mockRestore();
+  }
+});
+
+test("the pre-existing fallback to path is kept", async () => {
+  const runSpy = spyOn(runModule, "runGlab").mockResolvedValue({
+    stdout: JSON.stringify({ path: "group/project" }),
+    stderr: "",
+    code: 0,
+  });
+  try {
+    expect((await projectInfo("/tmp/glabscope-path-fallback")).fullPath).toBe("group/project");
+  } finally {
+    runSpy.mockRestore();
+  }
+});
+
+test("two first reads of the same directory share one glab repo view", async () => {
+  let calls = 0;
+  const runSpy = spyOn(runModule, "runGlab").mockImplementation(async () => {
+    calls += 1;
+    await Bun.sleep(5);
+    return {
+      stdout: JSON.stringify({
+        path_with_namespace: "group/project",
+        web_url: "https://gitlab.example.com/group/project",
+      }),
+      stderr: "",
+      code: 0,
+    };
+  });
+  try {
+    const cwd = "/tmp/glabscope-project-concurrent";
+    const [first, second] = await Promise.all([projectInfo(cwd), projectInfo(cwd)]);
+    expect(second).toEqual(first);
+    expect(calls).toBe(1);
+  } finally {
+    runSpy.mockRestore();
+  }
+});
+
+test("a failed project read is not cached", async () => {
+  let calls = 0;
+  const runSpy = spyOn(runModule, "runGlab").mockImplementation(async () => {
+    calls += 1;
+    if (calls === 1) {
+      return { stdout: "", stderr: "boom", code: 1 };
+    }
+    return {
+      stdout: JSON.stringify({ path_with_namespace: "group/project" }),
+      stderr: "",
+      code: 0,
+    };
+  });
+  try {
+    const cwd = "/tmp/glabscope-project-retry";
+    await expect(projectInfo(cwd)).rejects.toThrow("boom");
+    expect((await projectInfo(cwd)).fullPath).toBe("group/project");
+    expect(calls).toBe(2);
   } finally {
     runSpy.mockRestore();
   }

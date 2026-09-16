@@ -163,7 +163,7 @@ export type ProjectInfo = {
   webUrl: string | null;
 };
 
-const projectCache = new Map<string, ProjectInfo>();
+const projectCache = new Map<string, Promise<ProjectInfo>>();
 
 /**
  * The project glab resolves for `cwd`, cached per working tree. The same
@@ -171,12 +171,25 @@ const projectCache = new Map<string, ProjectInfo>();
  * needs and the web URL the open key needs, so neither adds a subprocess: only
  * `path_with_namespace` is required, exactly as before, and a payload without
  * `web_url` still yields a usable full path with no web address.
+ *
+ * The in-flight read is cached as well, so an open started from the list and
+ * the graph fetch that follows it share one `glab repo view` instead of racing
+ * two; a read that fails is dropped so the next caller can try again.
  */
 export async function projectInfo(cwd = process.cwd()): Promise<ProjectInfo> {
   const cached = projectCache.get(cwd);
   if (cached) {
     return cached;
   }
+  const pending = loadProjectInfo(cwd).catch((error: unknown) => {
+    projectCache.delete(cwd);
+    throw error;
+  });
+  projectCache.set(cwd, pending);
+  return pending;
+}
+
+async function loadProjectInfo(cwd: string): Promise<ProjectInfo> {
   const raw = parseJsonStdout<{
     path_with_namespace?: string;
     path?: string;
@@ -186,9 +199,7 @@ export async function projectInfo(cwd = process.cwd()): Promise<ProjectInfo> {
   if (!fullPath) {
     throw new Error("glab repo view did not include path_with_namespace");
   }
-  const info: ProjectInfo = { fullPath, webUrl: raw.web_url || null };
-  projectCache.set(cwd, info);
-  return info;
+  return { fullPath, webUrl: raw.web_url || null };
 }
 
 export async function projectFullPath(cwd = process.cwd()): Promise<string> {
