@@ -1,7 +1,7 @@
 import { expect, mock, spyOn, test } from "bun:test";
 import fixture from "../fixtures/pipeline-jobs-needs.json";
 import missing from "../fixtures/needs-missing.json";
-import { fetchPipelineGraph, NeedsUnavailableError, parsePipelineGraph } from "./graph.ts";
+import { fetchPipelineGraph, latestJobs, NeedsUnavailableError, parsePipelineGraph } from "./graph.ts";
 import { RateLimitedError } from "./ratelimit.ts";
 import * as runModule from "./run.ts";
 
@@ -14,6 +14,15 @@ test("parses real jobs and name-based needs", () => {
   expect(sonarqube?.numericId).toBe("47085888");
   expect(graph.jobs.some((job) => job.isBridge)).toBe(false);
   expect(graph.truncated).toBe(false);
+  expect(graph.stageNames).toEqual([
+    "prepare",
+    "secure_code",
+    "metrics",
+    "build_images",
+    "deploy",
+    "security",
+  ]);
+  expect(graph.jobs.every((job) => job.retried === false)).toBe(true);
 });
 
 test("fails clearly when needs is absent from the schema", () => {
@@ -55,6 +64,46 @@ test("bridge jobs stay as ordinary nodes on the same pipeline", () => {
   expect(graph.jobs).toHaveLength(2);
   expect(graph.jobs[1]?.isBridge).toBe(true);
   expect(graph.iid).toBe("1");
+  expect(graph.jobs[0]?.retried).toBe(false);
+  expect(graph.stageNames).toEqual([]);
+});
+
+test("latest attempt is the job with retried false, else the highest numeric id", () => {
+  const graph = parsePipelineGraph({
+    data: {
+      project: {
+        pipeline: {
+          id: "gid://gitlab/Ci::Pipeline/1",
+          iid: "1",
+          status: "SUCCESS",
+          stages: { nodes: [{ name: "test" }] },
+          jobs: {
+            nodes: [
+              {
+                id: "gid://gitlab/Ci::Build/10",
+                name: "lint",
+                status: "failed",
+                kind: "BUILD",
+                retried: true,
+                stage: { name: "test" },
+                needs: { nodes: [] },
+              },
+              {
+                id: "gid://gitlab/Ci::Build/12",
+                name: "lint",
+                status: "success",
+                kind: "BUILD",
+                retried: false,
+                stage: { name: "test" },
+                needs: { nodes: [] },
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+  expect(latestJobs(graph.jobs).map((job) => job.numericId)).toEqual(["12"]);
 });
 
 test("a rate-limited graphql call is classified as a rate-limit error", async () => {

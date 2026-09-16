@@ -5,6 +5,8 @@
  * not the upstream job id — match edges by `name`. Job `id` is
  * `gid://gitlab/Ci::Build/<rest-job-id>` (use that numeric tail for `glab ci trace`).
  * `kind` is BUILD / BRIDGE. REST `GET .../pipelines/:id/jobs` has no `needs`.
+ * `Pipeline.stages.nodes` is the GitLab column order (do not sort names).
+ * `CiJob.retried` is true for superseded attempts; the latest attempt is `retried: false`.
  */
 export const PIPELINE_JOBS_QUERY = `
 query {
@@ -13,6 +15,9 @@ query {
       id
       iid
       status
+      stages {
+        nodes { name }
+      }
       jobs(first: 100) {
         pageInfo { hasNextPage }
         nodes {
@@ -20,6 +25,7 @@ query {
           name
           status
           kind
+          retried
           stage { name }
           needs {
             nodes { id name }

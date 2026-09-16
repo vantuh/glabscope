@@ -20,6 +20,7 @@ export type JobNode = {
   stage: string;
   needsNames: string[];
   isBridge: boolean;
+  retried: boolean;
 };
 
 export type PipelineGraph = {
@@ -27,6 +28,7 @@ export type PipelineGraph = {
   iid: string;
   status: string;
   jobs: JobNode[];
+  stageNames: string[];
   truncated: boolean;
 };
 
@@ -36,6 +38,7 @@ type GqlJob = {
   name: string;
   status: string;
   kind?: string;
+  retried?: boolean | null;
   stage?: { name?: string } | null;
   needs?: { nodes?: GqlNeed[] | null } | null;
 };
@@ -47,12 +50,48 @@ type GqlResponse = {
         id: string;
         iid: string;
         status: string;
+        stages?: { nodes?: { name?: string | null }[] | null } | null;
         jobs?: { nodes?: GqlJob[] | null; pageInfo?: { hasNextPage?: boolean } | null };
       } | null;
     } | null;
   };
   errors?: { message: string; path?: unknown; extensions?: { fieldName?: string } }[];
 };
+
+export function attemptKey(job: Pick<JobNode, "name" | "stage">): string {
+  return `${job.stage}\0${job.name}`;
+}
+
+export function jobAttempts(jobs: JobNode[], job: Pick<JobNode, "name" | "stage">): JobNode[] {
+  return jobs
+    .filter((item) => item.name === job.name && item.stage === job.stage)
+    .slice()
+    .sort((a, b) => Number(b.numericId) - Number(a.numericId));
+}
+
+export function latestJobs(jobs: JobNode[]): JobNode[] {
+  const groups = new Map<string, JobNode[]>();
+  const order: string[] = [];
+  for (const job of jobs) {
+    const key = attemptKey(job);
+    const list = groups.get(key);
+    if (!list) {
+      order.push(key);
+      groups.set(key, [job]);
+    } else {
+      list.push(job);
+    }
+  }
+  return order.map((key) => {
+    const list = groups.get(key) ?? [];
+    return (
+      list.find((job) => !job.retried) ??
+      list.reduce((best, job) =>
+        Number(job.numericId) > Number(best.numericId) ? job : best,
+      )
+    );
+  });
+}
 
 export function numericIdFromGid(gid: string): string {
   const tail = gid.split("/").pop();
@@ -101,6 +140,7 @@ export function parsePipelineGraph(payload: GqlResponse): PipelineGraph {
         .map((need) => need.name)
         .filter((name): name is string => Boolean(name)),
       isBridge: kind.toUpperCase() === "BRIDGE",
+      retried: Boolean(node.retried),
     };
   });
 
@@ -109,6 +149,9 @@ export function parsePipelineGraph(payload: GqlResponse): PipelineGraph {
     iid: pipeline.iid,
     status: pipeline.status,
     jobs,
+    stageNames: (pipeline.stages?.nodes ?? [])
+      .map((stage) => stage.name?.trim() ?? "")
+      .filter((name) => name.length > 0),
     truncated: Boolean(pipeline.jobs?.pageInfo?.hasNextPage),
   };
 }

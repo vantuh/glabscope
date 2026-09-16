@@ -5,6 +5,28 @@
         "id": "gid://gitlab/Ci::Pipeline/1458632",
         "iid": "18",
         "status": "SUCCESS",
+        "stages": {
+          "nodes": [
+            {
+              "name": "prepare"
+            },
+            {
+              "name": "secure_code"
+            },
+            {
+              "name": "metrics"
+            },
+            {
+              "name": "build_images"
+            },
+            {
+              "name": "deploy"
+            },
+            {
+              "name": "security"
+            }
+          ]
+        },
         "jobs": {
           "nodes": [
             {
@@ -17,7 +39,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085894",
@@ -29,7 +52,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085893",
@@ -41,7 +65,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085892",
@@ -53,7 +78,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085891",
@@ -65,7 +91,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085890",
@@ -77,7 +104,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085889",
@@ -89,7 +117,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085888",
@@ -106,7 +135,8 @@
                     "name": "tests"
                   }
                 ]
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085887",
@@ -127,7 +157,8 @@
                     "name": "tests"
                   }
                 ]
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085886",
@@ -139,7 +170,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085885",
@@ -151,7 +183,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085884",
@@ -163,7 +196,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085883",
@@ -180,7 +214,8 @@
                     "name": "secret_detection"
                   }
                 ]
-              }
+              },
+              "retried": false
             },
             {
               "id": "gid://gitlab/Ci::Build/47085882",
@@ -192,7 +227,8 @@
               },
               "needs": {
                 "nodes": []
-              }
+              },
+              "retried": false
             }
           ]
         }

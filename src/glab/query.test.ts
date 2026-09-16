@@ -2,10 +2,12 @@ import { expect, test } from "bun:test";
 import fixture from "../fixtures/pipeline-jobs-needs.json";
 import { PIPELINE_JOBS_QUERY, pipelineJobsQuery } from "./query.ts";
 
-test("recorded query asks for jobs, status, and needs", () => {
+test("recorded query asks for jobs, stages, retried, status, and needs", () => {
   expect(PIPELINE_JOBS_QUERY).toContain("needs");
   expect(PIPELINE_JOBS_QUERY).toContain("status");
   expect(PIPELINE_JOBS_QUERY).toContain("pageInfo");
+  expect(PIPELINE_JOBS_QUERY).toContain("stages");
+  expect(PIPELINE_JOBS_QUERY).toContain("retried");
 });
 
 test("real payload includes job ids and at least one named need", () => {
