@@ -39,6 +39,7 @@ let openCalls: string[] = [];
 let openResult = true;
 let projectWebUrl: string | null = "https://gitlab.example.com/group/project";
 let projectInfoError: string | null = null;
+let projectInfoGate: PromiseWithResolvers<{ fullPath: string; webUrl: string | null }> | null = null;
 
 function sampleGraph(): PipelineGraph {
   return {
@@ -270,6 +271,7 @@ beforeEach(() => {
   openResult = true;
   projectWebUrl = "https://gitlab.example.com/group/project";
   projectInfoError = null;
+  projectInfoGate = null;
 
   spyOn(browserModule, "openInBrowser").mockImplementation((url: string) => {
     openCalls.push(url);
@@ -278,6 +280,9 @@ beforeEach(() => {
   spyOn(graphModule, "projectInfo").mockImplementation(() => {
     if (projectInfoError) {
       return Promise.reject(new Error(projectInfoError));
+    }
+    if (projectInfoGate) {
+      return projectInfoGate.promise;
     }
     return Promise.resolve({ fullPath: "group/project", webUrl: projectWebUrl });
   });
@@ -3571,6 +3576,8 @@ test("the open key on the attempts list opens the focused attempt, not the newes
   try {
     await openAttempts(setup);
     expect(focusedAttemptRow(setup.captureCharFrame(), "12")).toBe(true);
+    // This list was reached with the confirm key, so no pick notice is shown.
+    expect(setup.captureCharFrame()).not.toContain("several attempts");
     setup.mockInput.pressKey("ARROW_DOWN");
     await waitForFrame(setup, (f) => focusedAttemptRow(f, "10"), "older attempt focused");
 
@@ -3734,6 +3741,79 @@ test("the open key never writes the clipboard, asks no prompt, or fetches on any
     setup.mockInput.pressKey("o");
     await waitFor(() => openCalls.length === 4, "log open");
     noSideEffects(graphFetches, spawnsAtLog);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("Shift+O opens the same page as o", async () => {
+  const setup = await mountApp();
+  try {
+    // OpenTUI reports an uppercase O as the same lowercase name with shift set.
+    setup.mockInput.pressKey("o", { shift: true });
+    await waitFor(() => openCalls.length === 1, "open call");
+    expect(openCalls).toEqual([`${PROJECT_WEB_URL}/-/pipelines/42`]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("an open still resolving does not let the browser key reach the chooser", async () => {
+  listDefault = [row(42, 5, "success")];
+  graphGate.resolve(retriedAttemptsGraph());
+  projectInfoGate = Promise.withResolvers();
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await waitForFrame(setup, (f) => f.includes("pipelines"), "list");
+    // The list open is still resolving while the operator walks into the graph.
+    setup.mockInput.pressKey("o");
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (f) => f.includes("pipeline 5"), "graph");
+
+    setup.mockInput.pressKey("o");
+    await Bun.sleep(20);
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("pipeline 5");
+    expect(frame).not.toContain("attempts lint");
+    expect(frame).not.toContain("several attempts");
+    expect(openCalls).toEqual([]);
+
+    // The deferred open lands as the one page it was, not a second action.
+    projectInfoGate.resolve({ fullPath: "group/project", webUrl: PROJECT_WEB_URL });
+    await waitFor(() => openCalls.length === 1, "the deferred open");
+    expect(openCalls).toEqual([`${PROJECT_WEB_URL}/-/pipelines/42`]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a failed launch on the attempts list and the log keeps both screens usable", async () => {
+  openResult = false;
+  graphGate.resolve(retriedAttemptsGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openAttempts(setup);
+    setup.mockInput.pressKey("o");
+    const attemptsFrame = await waitForFrame(
+      setup,
+      (f) => f.includes("the browser could not be launched"),
+      "attempts launch failure notice",
+    );
+    expect(attemptsFrame).toContain("attempts lint");
+    expect(focusedAttemptRow(attemptsFrame, "12")).toBe(true);
+
+    traceStdout = new TextEncoder().encode("boom\n");
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (f) => f.includes("boom"), "log screen");
+    setup.mockInput.pressKey("o");
+    const logFrame = await waitForFrame(
+      setup,
+      (f) => f.includes("the browser could not be launched") && f.includes("boom"),
+      "log launch failure notice",
+    );
+    // The captured output stays readable under the notice.
+    expect(logFrame).toContain("log lint");
   } finally {
     setup.renderer.destroy();
   }
