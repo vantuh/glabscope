@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
 import {
+  chmod,
+  copyFile,
+  mkdir,
   mkdtemp,
   readFile,
   readlink,
   readdir,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -22,10 +26,21 @@ interface Result {
   stderr: string;
 }
 
-async function run(script: string, prefix: string): Promise<Result> {
+async function run(
+  script: string,
+  prefix: string,
+  extraEnv: Record<string, string> = {},
+): Promise<Result> {
   const proc = Bun.spawn(["bash", script], {
     cwd: ROOT,
-    env: { ...process.env, PREFIX: prefix },
+    env: {
+      ...process.env,
+      // An isolated HOME as well as PREFIX, so that even a regression which
+      // ignored PREFIX could not reach the operator's real ~/.local/bin.
+      HOME: join(prefix, "home"),
+      ...extraEnv,
+      PREFIX: prefix,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -63,6 +78,66 @@ test("a second install leaves exactly one entry pointing at the build output", (
     expect(await readdir(prefix)).toEqual(["glabscope"]);
     expect(await readlink(join(prefix, "glabscope"))).toBe(ARTIFACT);
   }));
+
+test("the installer replaces an entry that is a symlink to a directory in place", () =>
+  withPrefix(async (prefix) => {
+    const entry = join(prefix, "glabscope");
+    const elsewhere = join(prefix, "elsewhere");
+    await mkdir(elsewhere);
+    await symlink(elsewhere, entry);
+
+    const result = await run(INSTALL, prefix);
+
+    expect(result.code).toBe(0);
+    expect(await readlink(entry)).toBe(ARTIFACT);
+    // Following the old link would have written the command into `elsewhere`.
+    expect(await readdir(elsewhere)).toEqual([]);
+  }));
+
+test("the installer refuses a directory at the entry path", () =>
+  withPrefix(async (prefix) => {
+    const entry = join(prefix, "glabscope");
+    await mkdir(entry);
+
+    const result = await run(INSTALL, prefix);
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("a directory is already there");
+    // Nothing may be nested inside it either.
+    expect(await readdir(entry)).toEqual([]);
+  }));
+
+test("a failed build drops our own entry instead of leaving it dangling", async () => {
+  const project = await mkdtemp(join(tmpdir(), "glabscope-project-"));
+  const prefix = await mkdtemp(join(tmpdir(), "glabscope-install-"));
+  try {
+    // A project-shaped tree: the real installer, no build output, and a `bun`
+    // that fails, so the script resolves its own root and fails its build.
+    const bin = join(project, "bin");
+    await mkdir(join(project, "scripts"), { recursive: true });
+    await mkdir(bin);
+    await copyFile(INSTALL, join(project, "scripts", "install.sh"));
+    await writeFile(join(bin, "bun"), "#!/bin/sh\nexit 3\n");
+    await chmod(join(bin, "bun"), 0o755);
+    // The installer resolves its own root physically, so the link it would own
+    // is spelled with the physical path.
+    await symlink(
+      join(await realpath(project), "dist", "glabscope"),
+      join(prefix, "glabscope"),
+    );
+
+    const result = await run(join(project, "scripts", "install.sh"), prefix, {
+      PATH: `${bin}:/usr/bin:/bin`,
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("build failed");
+    expect(await readdir(prefix)).toEqual([]);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+    await rm(prefix, { recursive: true, force: true });
+  }
+});
 
 test("the uninstaller removes the link the installer created", () =>
   withPrefix(async (prefix) => {
