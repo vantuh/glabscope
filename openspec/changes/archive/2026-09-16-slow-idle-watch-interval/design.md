@@ -16,7 +16,7 @@ Relevant facts this design leans on:
 
 - Make the difference between "something is active" and "nothing is active" visible in the request rate, not just in the constant's name.
 - Pin the relationship between the two intervals in the specs so the next edit cannot collapse it.
-- Keep the change to the cadence policy entirely inside `src/polling.ts` plus its test.
+- Keep the change to the cadence policy inside `src/polling.ts` plus its test, with no production file other than `src/polling.ts` touched. The one edit the plan did not foresee is the watch-interval assertions in `src/app.test.tsx`, which hardcoded 5000 and now read the imported constants.
 
 **Non-Goals:**
 

@@ -22,7 +22,7 @@ None.
 
 ## Impact
 
-- `src/polling.ts` (one constant) and `src/polling.test.ts` (assertions). No other source file changes.
+- `src/polling.ts` (one constant), `src/polling.test.ts` (assertions), and `src/app.test.tsx` (its four watch-interval assertions hardcoded 5000 and now read the imported constants). The plan had counted only the first two files; no production file other than `src/polling.ts` changes.
 - No change to `glab` invocation, rate-limit backoff, retry, navigation, rendering, or the model reducer.
 - `pipeline-list-columns` is in flight and modifies a different `pipeline-list` requirement, so the two deltas do not collide on the same requirement.
 
