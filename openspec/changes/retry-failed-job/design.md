@@ -13,8 +13,8 @@ See proposal.md - Why. Constraints that shape the approach:
 
 **Goals:**
 
-- One retry path shared by the job graph and the job log, with the same retryable-status gate and the same non-fatal feedback rules.
-- After a retry the operator sees the new attempt where they already are: the graph node for that job, or the log screen's live trace.
+- One retry path shared by the job graph, the attempts list, and the job log, with the same retryable-status gate and the same non-fatal feedback rules.
+- After a retry the operator sees the new attempt where they already are: the graph card for that job, the new row in the attempts list, or the log screen's live trace.
 - Keep GitLab interaction to existing `glab` subprocesses and keep the model reducer the single owner of retry in-flight state.
 
 **Non-Goals:**
@@ -60,6 +60,9 @@ Polling, manual refresh, and a post-restart refresh can be in flight together, a
 
 **12. A log screen that cannot trace leaves for the graph.**
 If the trace process cannot be spawned for a re-attached attempt, the log screen has nothing to show and no further navigation of its own, so the operator is returned to the graph for that job with the reason as a non-fatal message — the same path a restart whose new id could not be read takes. Leaving the screen open would keep claiming `live` with no process behind it.
+
+**13. The attempts list restarts its focused row, and focus follows a replaced latest attempt.**
+The row under the cursor is the attempt that gets restarted, so an older attempt is never swapped for whatever the card currently shows. Focus after the refresh is derived rather than stored: the attempts branch prefers the focused attempt's id, except when that focused row was the job's latest attempt — the one a restart replaces — because that id is exactly what the refresh moved on from. Dropping the preference there lets focus land on the newest row, which is the attempt that replaced it, while retrying an earlier superseded attempt keeps focus on the attempt that was asked for. No new retry state is needed: the existing `focusedAttemptIndex` covers it.
 
 ## Risks / Trade-offs
 

@@ -15,6 +15,10 @@ Each framed screen MUST show the keys that work on that screen in a dim help lin
 - **WHEN** the job log is visible
 - **THEN** retry, back, and live vs ended are visible in the chrome, and the trace body is only log text
 
+#### Scenario: Attempts help
+- **WHEN** the attempts list is visible
+- **THEN** open log, retry, back, and quit appear in the dim chrome help line
+
 #### Scenario: A status does not extend the help line
 - **WHEN** a transient status is visible on a screen and then clears
 - **THEN** the help line text is unchanged, with no status word inside it in either state

@@ -31,3 +31,10 @@ This task, not the retry-command spike in 1.1, is superseded by the latest-attem
 - [x] 6.1 Run `bun test` and verify every test added or touched by this change passes; report any still-failing test that belongs to the in-progress `gitlab-style-pipeline-graph` change instead of fixing it here.
 - [x] 6.2 List the retry key in the README's key line, next to the existing keys, without reordering or rewriting the rest of that line. Verify the README diff shows only the added key.
 - [ ] 6.3 Manually retry a failed job from the graph and from its log against the operator's GitLab: verify the restarted attempt replaces the old node, the log screen streams the new attempt, `ctrl+r` on a running and on a successful job changes nothing but shows the message, and Esc still returns to the graph and list.
+
+## 7. Retry on the Job Attempts List
+
+- [x] 7.1 Make the attempts branch of `refreshGraph` follow a replaced latest attempt: prefer the focused attempt's id, and drop that preference when the focused row was the focused job's own latest attempt, so focus lands on the newest row. Verify `src/model.test.ts` covers the latest-attempt retry (focus moves to the new attempt) and the earlier-attempt retry (focus stays on the attempt that was retried).
+- [x] 7.2 Wire `ctrl+r` on the attempts screen: restart the focused attempt through `retryJob`, refresh the graph immediately on success, and show refusals, in-flight state, and GitLab failures non-fatally above the rows. Verify `src/app.test.tsx` shows one call for the focused attempt's id with focus on the replacement row, no `glab` call plus a message for a non-retryable attempt, one call for a repeated press while in flight, and the rows still navigable after a failed retry.
+- [x] 7.3 Add `ctrl+r retry` to the attempts key-help footer. Verify a captured frame for the attempts screen contains the retry key in the chrome row only.
+- [x] 7.4 Re-run `bun test` and `./node_modules/.bin/tsc --noEmit` after section 7: every test added or touched by this change must pass.

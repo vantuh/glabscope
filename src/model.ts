@@ -285,11 +285,16 @@ export function reduce(model: AppModel, action: Action): AppModel {
       const focusedJobIndex = visibleFocusIndex(action.graph, current?.id, current);
       const nextCard = action.graph.jobs[focusedJobIndex];
       const currentAttempt = focusedAttempt(model);
+      // A restart replaces the job's latest attempt, so when that was the
+      // focused row there is no id left to hold on to: the newest row is the
+      // attempt that replaced it.
+      const keepAttemptId =
+        currentAttempt && currentAttempt.id === current?.id ? undefined : currentAttempt?.id;
       return {
         ...model,
         graph: action.graph,
         focusedJobIndex,
-        focusedAttemptIndex: attemptFocusIndex(action.graph, nextCard, currentAttempt?.id),
+        focusedAttemptIndex: attemptFocusIndex(action.graph, nextCard, keepAttemptId),
         refreshWarning: null,
         manualRefresh: null,
         retryMessage: null,

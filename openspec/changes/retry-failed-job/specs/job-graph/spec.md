@@ -63,3 +63,30 @@ Pressing the retry key on the graph SHALL restart the focused job in GitLab and 
 #### Scenario: Graph refreshed while the restart runs
 - **WHEN** a background or manual graph refresh completes while a retry is in flight
 - **THEN** the refreshed graph is shown and the retry in flight is unaffected
+
+### Requirement: Retry a failed attempt from the attempts list
+Pressing the retry key on the attempts list SHALL restart the focused attempt in GitLab. The system SHALL only request a restart when the focused attempt's status is failed or canceled and it is not a trigger or bridge job; for any other attempt the system MUST NOT contact GitLab and MUST show a short non-fatal message instead. The restart MUST go through the GitLab CLI retry command for that attempt's id, and the system MUST NOT restart an attempt by any other route. After a successful restart the attempts list MUST refresh for that job.
+
+#### Scenario: Retry the job's latest attempt
+- **WHEN** the focused row is the job's latest attempt, it is failed, and the operator presses the retry key
+- **THEN** that attempt is restarted in GitLab, the list refreshes for the job, and focus follows the attempt that replaced it
+
+#### Scenario: Retry an earlier attempt
+- **WHEN** the focused row is an earlier, superseded attempt, it is failed, and the operator presses the retry key
+- **THEN** that attempt is restarted in GitLab and focus stays on the attempt that was retried
+
+#### Scenario: Retry feedback while the restart is in flight
+- **WHEN** a retry has been requested from the attempts list and GitLab has not answered yet
+- **THEN** the attempts screen marks the retry as in progress without blocking navigation
+
+#### Scenario: Focused attempt is not retryable
+- **WHEN** the operator presses the retry key on an attempt that is running, pending, successful, or skipped
+- **THEN** no restart is requested, the list keeps showing the job's attempts, and a short non-fatal message explains that only failed or canceled attempts can be retried
+
+#### Scenario: Repeated retry while one is in flight
+- **WHEN** the operator presses the retry key again while a retry is still in flight
+- **THEN** the system does not request a second restart and the in-flight retry is unaffected
+
+#### Scenario: GitLab rejects the retry
+- **WHEN** the retry request is rejected by GitLab or the CLI
+- **THEN** the attempts list stays navigable with its rows and a non-fatal message shows why the restart was refused

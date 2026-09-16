@@ -659,6 +659,16 @@ export function App() {
     if (model.screen === "attempts" && model.graph) {
       const card = focusedJob(model);
       const attempts = card ? jobAttempts(model.graph.jobs, card) : [];
+      if (isRetryKey(key) && navigatingRef.current === null && retryRef.current === null) {
+        const attempt = focusedAttempt(model);
+        if (attempt) {
+          const iid = model.graph.iid;
+          startRetry(attempt, ({ jobId }) => {
+            dispatch({ type: "retrySucceeded", jobId });
+            refreshGraphAfterRetry(iid);
+          });
+        }
+      }
       if (key.name === "up") {
         const index = attempts.findIndex((job) => job.id === focusedAttempt(model)?.id);
         const next = attempts[index - 1];
@@ -745,8 +755,14 @@ export function App() {
     return (
       <ScreenPanel
         title={`attempts ${card?.name ?? "job"}`}
-        keyHelp="enter log  esc graph  q quit"
-        status={refreshing === "graph" ? <RefreshStatus label="refreshing…" /> : undefined}
+        keyHelp="enter log  ctrl+r retry  esc graph  q quit"
+        status={
+          model.retry ? (
+            <RefreshStatus label="retrying…" />
+          ) : refreshing === "graph" ? (
+            <RefreshStatus label="refreshing…" />
+          ) : undefined
+        }
         loadingLabel={
           model.navigating?.kind === "logs"
             ? "Loading log…"
@@ -755,6 +771,7 @@ export function App() {
               : undefined
         }
       >
+        {model.retryMessage ? <text fg="#eab308">{model.retryMessage}</text> : null}
         {model.refreshWarning ? (
           <text fg="#eab308">refresh error: {model.refreshWarning} — retrying</text>
         ) : null}

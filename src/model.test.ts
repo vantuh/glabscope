@@ -586,6 +586,59 @@ test("a retry whose new attempt cannot be identified returns to the graph", () =
   expect(focusedJob(model)?.numericId).toBe("10");
 });
 
+test("refreshGraph follows the attempt that replaced the job's latest one", () => {
+  const superseded = { ...retryableJob("lint", "10"), retried: true };
+  const latest = { ...retryableJob("lint", "12"), retried: false };
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([superseded, latest], "FAILED"),
+  });
+  model = reduce(model, { type: "openAttempts" });
+  expect(focusedAttempt(model)?.numericId).toBe("12");
+
+  model = reduce(model, {
+    type: "refreshGraph",
+    graph: graph([superseded, { ...latest, retried: true }, retryableJob("lint", "14")], "RUNNING"),
+  });
+  expect(model.screen).toBe("attempts");
+  expect(focusedAttempt(model)?.numericId).toBe("14");
+});
+
+test("refreshGraph keeps attempts focus on an earlier attempt that was retried", () => {
+  const superseded = { ...retryableJob("lint", "10"), retried: true };
+  const latest = { ...retryableJob("lint", "12"), retried: false };
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([superseded, latest], "FAILED"),
+  });
+  model = reduce(model, { type: "openAttempts" });
+  model = reduce(model, { type: "focusAttempt", id: "gid://gitlab/Ci::Build/10" });
+  expect(focusedAttempt(model)?.numericId).toBe("10");
+
+  model = reduce(model, {
+    type: "refreshGraph",
+    graph: graph([superseded, { ...latest, retried: true }, retryableJob("lint", "14")], "RUNNING"),
+  });
+  expect(focusedAttempt(model)?.numericId).toBe("10");
+});
+
+test("a retry started from the attempts list does not take over the log screen", () => {
+  const superseded = { ...retryableJob("lint", "10"), retried: true };
+  const latest = { ...retryableJob("lint", "12"), retried: false };
+  let model = reduce(emptyModel, {
+    type: "openGraph",
+    graph: graph([superseded, latest], "FAILED"),
+  });
+  model = reduce(model, { type: "openAttempts" });
+  model = reduce(model, { type: "logChunk", chunk: "kept\n" });
+  model = reduce(model, { type: "startRetry", job: latest });
+  expect(model.retry).toEqual({ jobId: "12", screen: "attempts" });
+  model = reduce(model, { type: "retrySucceeded", jobId: "14" });
+  expect(model.screen).toBe("attempts");
+  expect(model.logJobId).toBeNull();
+  expect(model.retry).toBeNull();
+});
+
 test("a second retry from the log while one is in flight is rejected", () => {
   let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
   model = openLogOn(model, "gid://gitlab/Ci::Build/10");
