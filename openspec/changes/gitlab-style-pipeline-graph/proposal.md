@@ -4,8 +4,9 @@ The job graph is a single vertical list: up/down and left/right all walk the sam
 
 ## What Changes
 
-- **BREAKING (graph keyboard and layout):** replace the one-column job list with a GitLab-style pipeline graph: stages as columns left-to-right, jobs stacked in each stage as rounded blocks, and directed `needs` arrows between those blocks.
-- Up/down move among jobs in the focused stage; left/right move to an adjacent stage. Enter still opens the job log; Esc still returns to the pipeline list.
+- **BREAKING (graph keyboard and layout):** replace the one-column job list with a GitLab-style pipeline graph: stages as columns left-to-right in GraphQL `stages.nodes` order, jobs stacked in each stage as rounded blocks, and directed `needs` arrows between those blocks.
+- Up/down move among jobs in the focused stage; left/right move to an adjacent stage. Enter opens the job log, or an attempts list when that card has more than one attempt; Esc still returns toward the pipeline list.
+- Collapse same-name retries to one latest card (`retried: false`); keep earlier attempts in the model for that list.
 - Show each job’s status with a Nerd Font icon **and** the existing four status-bucket colors (icon is the primary glyph; color stays as a second cue).
 - Keep GraphQL `needs` as the only source of arrows: do not invent edges from stage order, parse `.gitlab-ci.yml`, or scrape GitLab HTML.
 
@@ -17,7 +18,7 @@ The job graph is a single vertical list: up/down and left/right all walk the sam
 
 ### Modified Capabilities
 
-- `job-graph`: layout becomes stage columns with job cards and `needs` arrows (not a flattened list or rank-only columns). Keyboard becomes two-dimensional (vertical in a stage, horizontal across stages). Job status MUST include a Nerd Font icon in addition to bucket color.
+- `job-graph`: layout becomes stage columns with job cards and `needs` arrows (not a flattened list or rank-only columns). Keyboard becomes two-dimensional (vertical in a stage, horizontal across stages). Job status MUST include a Nerd Font icon in addition to bucket color. Retried jobs share one card; confirming that card lists attempts when more than one exists.
 
 ## Impact
 
@@ -29,7 +30,7 @@ The job graph is a single vertical list: up/down and left/right all walk the sam
 
 ## Non-goals
 
-- Retry, cancel, play/manual, artifacts, MR entry, YAML visualize, or child-pipeline drill-down from bridge jobs.
+- Triggering retry/cancel/play from this TUI, artifacts, MR entry, YAML visualize, or child-pipeline drill-down from bridge jobs. Viewing collapsed retries and opening earlier attempts’ logs is in scope.
 - Mouse, a second HTTP client, PAT UI, or GitLab HTML scraping.
 - Replacing OpenTUI/React/Bun or `glab`.
 - Changing the pipeline list or job-log screens beyond sharing status icons if a job name appears there (logs stay a trace pane).

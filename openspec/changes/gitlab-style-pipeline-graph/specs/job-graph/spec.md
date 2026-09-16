@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Same-pipeline needs graph
-For the selected pipeline the system SHALL display jobs as rounded cards grouped into stage columns from left to right (GitLab pipeline page), not as a single top-to-bottom list. Jobs that share a stage MUST stack in that stage’s column. The system SHALL draw directed arrows only for GraphQL `needs` (from needed jobs to dependents). Layout MUST NOT invent edges from stage order alone. Trigger or bridge jobs MUST appear as ordinary cards; v1 MUST NOT open a child pipeline graph from them.
+For the selected pipeline the system SHALL display jobs as rounded cards grouped into stage columns from left to right in GraphQL `pipeline.stages.nodes` order (GitLab pipeline page), not as a single top-to-bottom list and not by sorting stage names. Named stages present on jobs but missing from that list MUST append after it. Jobs that share a stage MUST stack in that stage’s column. The graph SHALL show one card per job name+stage using the latest attempt (`retried` false, else highest numeric id); earlier attempts MUST remain available after confirm when more than one exists. The system SHALL draw directed arrows only for GraphQL `needs` among those visible cards (from needed jobs to dependents). Layout MUST NOT invent edges from stage order alone. Trigger or bridge jobs MUST appear as ordinary cards; v1 MUST NOT open a child pipeline graph from them.
 
 #### Scenario: Jobs with needs
 - **WHEN** the selected pipeline has jobs linked by `needs`
@@ -17,7 +17,11 @@ For the selected pipeline the system SHALL display jobs as rounded cards grouped
 
 #### Scenario: Stage columns
 - **WHEN** the pipeline has more than one stage
-- **THEN** earlier stages appear to the left of later stages and jobs in the same stage appear in the same column
+- **THEN** earlier stages from `stages.nodes` appear to the left of later stages (for example `prepare` left of `security`) and jobs in the same stage appear in the same column
+
+#### Scenario: Retried job on the graph
+- **WHEN** a job name+stage has earlier attempts and a latest attempt
+- **THEN** the graph shows a single card for that job with the latest attempt’s status, and `needs` arrows attach only to visible latest cards
 
 ### Requirement: Status colors on jobs
 Each job card MUST use the same four visual buckets as the pipeline list: success, failed, running-or-pending, other. Each card MUST also show a Nerd Font status icon for that job so status is not color alone.
@@ -27,11 +31,27 @@ Each job card MUST use the same four visual buckets as the pipeline list: succes
 - **THEN** those four buckets are visually distinct on the graph by both color and icon
 
 ### Requirement: Keyboard navigation
-The operator SHALL move focus among job cards and confirm the focused job to open its log. Up and down MUST move among jobs in the same stage. Left and right MUST move to a job in the adjacent stage. A back action MUST return to the pipeline list.
+The operator SHALL move focus among job cards and confirm the focused job to open its log, or an attempts list when that card has more than one attempt. Up and down MUST move among jobs in the same stage. Left and right MUST move to a job in the adjacent stage. A back action from the graph MUST return to the pipeline list. A back action from a log opened via attempts MUST return to the attempts list.
 
 #### Scenario: Focus and open
-- **WHEN** the operator moves focus to a job and confirms
+- **WHEN** the operator moves focus to a job with a single attempt and confirms
 - **THEN** the job log screen opens for that job
+
+#### Scenario: Confirm a retried job
+- **WHEN** the operator confirms a graph card that has more than one attempt
+- **THEN** an attempts list opens (newest first) instead of the log, and confirming a row opens that attempt’s log
+
+#### Scenario: Loading feedback while opening a log
+- **WHEN** the operator confirms a job and the log screen is still being prepared
+- **THEN** the system dims only the framed graph’s content area with an animated spinner and loading text, while its border, title, and key-help footer remain visible
+
+#### Scenario: Repeated confirm while loading
+- **WHEN** the operator presses confirm again on the same or another job while a log open is already in flight
+- **THEN** the system does not start a second log open and the existing one is unaffected
+
+#### Scenario: Opening the log fails
+- **WHEN** opening the log screen fails after the operator confirms a job
+- **THEN** the system clears the loading indicator and shows the error, and the operator can confirm a job again
 
 #### Scenario: Vertical move in a stage
 - **WHEN** the operator presses up or down while several jobs share the focused stage

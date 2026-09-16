@@ -2,7 +2,7 @@
 
 See `proposal.md` for motivation. Today `src/layout/dag.ts` already builds a needs-ranked DAG (`buildDag`) but `src/app.tsx` flattens `visualJobs(dag)` into one `<text>` list. Graph keys treat up/left as “previous in that flat list” and down/right as “next”. Job color comes from `BUCKET_COLOR` in `src/status.ts`; there are no status glyphs.
 
-GitLab I/O stays unchanged: `glab ci list -F json` for the list screen, `glab api graphql` (existing `pipelineJobsQuery`) for jobs/status/stage/`needs`, `glab ci trace <job-id>` for logs. Do not parse `.gitlab-ci.yml` or scrape HTML for layout.
+GitLab I/O stays unchanged: `glab ci list -F json` for the list screen, `glab api graphql` (`pipelineJobsQuery`) for jobs/status/stage/`needs` plus `pipeline.stages.nodes { name }` and `CiJob.retried`, `glab ci trace <job-id>` for logs. Do not parse `.gitlab-ci.yml` or scrape HTML for layout.
 
 In-flight `polish-tui-chrome` frames the graph panel; `add-navigation-loading-spinner` adds loading copy. This change replaces only the graph *body* and graph arrow semantics.
 
@@ -13,21 +13,25 @@ In-flight `polish-tui-chrome` frames the graph panel; `add-navigation-loading-sp
 - 2D focus: up/down in a column, left/right across columns, clamp when the target column is shorter.
 - Nerd Font status icon plus existing four-bucket colors.
 - Keep polling, Esc, Enter, bridge-as-one-node, and truncation warning as they are.
+- Column X follows GitLab `Pipeline.stages.nodes` order. Graph cards collapse retries to the latest attempt; earlier attempts stay in the model for an attempts list.
 
 **Non-Goals:**
 - Bézier curves, mouse hit-testing, or a canvas besides OpenTUI boxes/text.
-- New `glab` commands or GraphQL fields beyond what `parsePipelineGraph` already returns (`stage.name`, `needs.nodes`).
+- New `glab` commands (`ci retry` / cancel / play). Do not filter `jobs(retried: false)` at query time — fetch every attempt.
+- GraphQL `stages.groups` or other fields beyond `stages.nodes.name`, existing job fields, and `retried`.
 - Font detection or a config toggle for ASCII fallback icons.
 
 ## Decisions
 
 ### 1. Columns are CI stages, ranks stay an edge helper
 
-Group jobs by `JobNode.stage`. Column order is first-seen stage name in the GraphQL job array (GitLab already returns jobs roughly in pipeline order). Jobs with an empty stage sit in a single `"(no stage)"` column at the end, not scattered.
+Group jobs by `JobNode.stage`. Column order is `pipeline.stages.nodes { name }` from GraphQL, left to right, **not** first-seen in the jobs array (jobs are newest-first and reverse GitLab’s stage order) and **not** a homemade sort of stage names. Named stages that appear on jobs but not in `stages.nodes` append in first-seen leftover order. Jobs with an empty stage sit in a single `"(no stage)"` column at the end, not scattered.
 
 Keep `buildDag` (or extract its edge walk) as the **only** source of arrows: name-matched `needs`, no stage-to-stage invented edges. Do **not** use topological ranks as the on-screen X axis; that is the Job dependencies view, which the operator declined.
 
 **Alternative considered:** Rank columns from `buildDag.ranks`. Rejected — user asked for the pipeline page (stages), not the DAG ranks view.
+
+**Alternative considered:** First-seen stage name in the jobs payload (no extra GraphQL). Rejected — GitLab returns jobs newest-first, so first-seen puts later stages on the left (`security` before `prepare`).
 
 ### 2. Cards in OpenTUI, arrows in the gaps
 
@@ -45,9 +49,10 @@ Pure function, e.g. `moveFocus(columns, focusedId, dir)`, used by `app.tsx` inst
 
 - `up`/`down`: clamp inside the current column; no wrap.
 - `left`/`right`: adjacent column; same job index, or last job if that column is shorter; no wrap off the first/last stage.
-- Refresh/openGraph: keep focus by job id (existing `focusJob` / `focusIndexForId`).
+- `openGraph`: focus the first job of the leftmost GitLab stage (first column after `stages.nodes` layout), not `jobs[0]` in payload order.
+- Refresh: keep the visible card by id, else by name+stage when the previous id is now a retried-away attempt.
 
-`focusedJobIndex` in `model.ts` can stay an index into `graph.jobs`; the layout layer maps id → column cell.
+`focusedJobIndex` in `model.ts` can stay an index into `graph.jobs`; the layout layer maps id → column cell. Visible cards are `latestJobs`, not every attempt.
 
 ### 4. Icons by GitLab status string, color by bucket
 
@@ -60,6 +65,14 @@ Glyphs live as UTF-8 in source; no extra npm font package. README one-liner: gra
 ### 5. Horizontal overflow
 
 If stages do not fit, wrap the graph body in the existing `scrollbox` (horizontal + vertical). Do not hide stages.
+
+### 6. Latest card on the graph, all attempts behind Enter
+
+Keep every GraphQL job in `PipelineGraph.jobs`. Graph cards and `needs` edges use `latestJobs`: group by name+stage (matrix parallels have distinct names), pick `retried: false`, else the highest numeric id. Missing `retried` defaults to false.
+
+Enter on a card with more than one attempt opens an attempts screen (newest-first). Enter there opens that attempt’s log. Esc from logs returns to attempts when opened from there (`logBackScreen`). A single-attempt card still opens logs directly. Graph polling continues on the attempts screen. Do not implement `glab ci retry` here.
+
+**Alternative considered:** Filter `jobs(retried: false)` in GraphQL. Rejected — the attempts list needs every attempt.
 
 ## Risks / Trade-offs
 
