@@ -101,6 +101,16 @@ async function waitForFrame(
   throw new Error(`Did not find ${label} in:\n${setup.captureCharFrame()}`);
 }
 
+/**
+ * The chrome row carrying the given key hint, plus its content between the
+ * frame borders, so assertions can name the row's first and last content
+ * column instead of absolute frame offsets.
+ */
+function chromeRow(frame: string, hint: string) {
+  const row = frame.split("\n").find((line) => line.includes(hint)) ?? "";
+  return { row, text: row.slice(row.indexOf("│") + 1, row.lastIndexOf("│")) };
+}
+
 function isDimmed(span: CapturedSpan) {
   const [r, g, b, a] = span.bg.toInts();
   return a === 255 && r > 0 && g > r && b > g;
@@ -252,7 +262,7 @@ afterEach(() => {
 
 test("screen panel renders rounded chrome with its title", async () => {
   const setup = await testRender(
-    <ScreenPanel title="startup" footer="q quit">
+    <ScreenPanel title="startup" keyHelp="q quit">
       <text>Checking glab…</text>
     </ScreenPanel>,
     { width: 40, height: 8 },
@@ -963,6 +973,129 @@ test("the footer shows a refreshing spinner while a background refresh is in fli
   }
 });
 
+test("the refresh spinner is pinned to the right edge, apart from the key help", async () => {
+  listDefault = [runningRow(42, 5)];
+  listGate = Promise.withResolvers<PipelineRow[]>();
+  const setup = await testRender(<App />, { width: 60, height: 12 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    const frame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("refreshing…") && /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(frame),
+      "in-flight refresh status",
+    );
+    const help = "enter graph  r refresh  q quit";
+    const { row, text } = chromeRow(frame, "enter graph");
+    // Keys flush left, status flush right, both on the same chrome row.
+    expect(text.startsWith(help)).toBe(true);
+    expect(text.endsWith("refreshing…")).toBe(true);
+    // The gap is exactly the justified remainder of the row: no separator is
+    // baked into the status text itself.
+    const gap = text.length - help.length - "⠋ refreshing…".length;
+    expect(gap).toBeGreaterThan(1);
+    expect(text.slice(help.length)).toMatch(
+      new RegExp(`^ {${gap}}[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] refreshing…$`),
+    );
+    expect(row).toContain(help);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("the graph chrome keeps its long key help intact with the spinner pinned right", async () => {
+  capturePollTimers();
+  graphGate.resolve({ ...sampleGraph(), status: "RUNNING" });
+  const setup = await testRender(<App />, { width: 120, height: 20 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("build"), "graph screen");
+    // Hold the next poll so the status stays on screen for the capture.
+    graphGate = Promise.withResolvers<PipelineGraph>();
+    const frame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("refreshing…") && /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(frame),
+      "in-flight graph refresh",
+    );
+    const help = "arrows move  enter log  r refresh  esc list  q quit";
+    const { text } = chromeRow(frame, "arrows move");
+    // At a realistic terminal width the longest help line survives whole and
+    // the status still sits at the far right of the same row.
+    expect(text.startsWith(help)).toBe(true);
+    expect(text.endsWith("refreshing…")).toBe(true);
+    const gap = text.length - help.length - "⠋ refreshing…".length;
+    expect(gap).toBeGreaterThan(1);
+    expect(text.slice(help.length)).toMatch(
+      new RegExp(`^ {${gap}}[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] refreshing…$`),
+    );
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("with no status pending the chrome row carries the key help alone", async () => {
+  const setup = await mountApp();
+  try {
+    const frame = setup.captureCharFrame();
+    const help = "enter graph  r refresh  q quit";
+    const { text } = chromeRow(frame, "enter graph");
+    expect(text.startsWith(help)).toBe(true);
+    // Nothing takes the status slot: no placeholder and no trailing text.
+    expect(text.slice(help.length).trim()).toBe("");
+    expect(text).not.toContain("refreshing");
+    expect(text).not.toContain("copied");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a refresh error stays a body row above the chrome row", async () => {
+  capturePollTimers();
+  listDefault = [runningRow(42, 5)];
+  listScript = [new Error("list failed")];
+  const setup = await testRender(<App />, { width: 60, height: 12 });
+  try {
+    const frame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("refresh error: list failed"),
+      "refresh warning row",
+    );
+    const lines = frame.split("\n");
+    const warningRow = lines.findIndex((line) => line.includes("refresh error:"));
+    const chromeIndex = lines.findIndex((line) => line.includes("enter graph"));
+    const warning = chromeRow(frame, "refresh error:");
+    const chrome = chromeRow(frame, "enter graph");
+    expect(warningRow).toBeGreaterThan(-1);
+    // Body content, above the chrome, not inside the status area.
+    expect(warningRow).toBeLessThan(chromeIndex);
+    expect(chrome.row).not.toContain("refresh error");
+    expect(warning.text.startsWith("refresh error: list failed — retrying")).toBe(true);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a status that overflows the row stays whole while the help text truncates", async () => {
+  listDefault = [runningRow(42, 5)];
+  listGate = Promise.withResolvers<PipelineRow[]>();
+  const setup = await testRender(<App />, { width: 40, height: 12 });
+  try {
+    await waitForFrame(setup, (frame) => frame.includes("pipelines"), "pipelines list");
+    const frame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("refreshing…") && /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(frame),
+      "in-flight refresh status",
+    );
+    const { text } = chromeRow(frame, "enter graph");
+    // The status keeps its whole label; the help text is the slot that yields.
+    expect(text.endsWith("refreshing…")).toBe(true);
+    expect(text).not.toContain("q quit");
+    expect(text.startsWith("enter graph")).toBe(true);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
 test("watch refresh discovers a job retried while the pipeline was terminal", async () => {
   const { scheduled } = capturePollTimers();
   graphGate.resolve(
@@ -1408,6 +1541,32 @@ test("y on the log yanks the whole retained buffer and names itself in the foote
     expect(copyPlainTextSpy).toHaveBeenCalledWith(body, expect.anything());
     expect(writes).toEqual([body]);
     await waitForFrame(setup, (frame) => frame.includes("copied to clipboard"), "copied notice");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("the copied notice is pinned to the right edge, apart from the log keys", async () => {
+  const { writes } = recordClipboardWrites();
+  const setup = await mountApp();
+  try {
+    await openLog(setup, "ERROR: boom\nSECOND: line\n");
+    setup.mockInput.pressKey("y");
+    await waitFor(() => writes.length > 0, "clipboard write after y");
+    const frame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("copied to clipboard"),
+      "copied notice",
+    );
+    const help = "ended · y yank · esc back";
+    const { row, text } = chromeRow(frame, "y yank");
+    // The live/ended marker and the log keys stay left, the notice sits right.
+    expect(text.startsWith(help)).toBe(true);
+    expect(text.endsWith("copied to clipboard")).toBe(true);
+    const gap = text.length - help.length - "copied to clipboard".length;
+    expect(gap).toBeGreaterThan(1);
+    expect(text.slice(help.length)).toBe(" ".repeat(gap) + "copied to clipboard");
+    expect(row).not.toContain(`${help}copied`);
   } finally {
     setup.renderer.destroy();
   }

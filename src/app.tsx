@@ -37,13 +37,13 @@ export const COPIED_NOTICE_MS = 1500;
 
 export function ScreenPanel({
   title,
-  footer,
+  keyHelp,
   status,
   loadingLabel,
   children,
 }: {
   title: string;
-  footer: string;
+  keyHelp: string;
   status?: ReactNode;
   loadingLabel?: string;
   children: ReactNode;
@@ -63,12 +63,12 @@ export function ScreenPanel({
           {children}
           {loadingLabel ? <LoadingOverlay label={loadingLabel} /> : null}
         </box>
-        {footer ? (
-          <box flexDirection="row">
+        {keyHelp ? (
+          <box flexDirection="row" justifyContent="space-between">
             <text fg={HELP_COLOR} selectable={false}>
-              {footer}
+              {keyHelp}
             </text>
-            {status}
+            {status ? <box flexShrink={0}>{status}</box> : null}
           </box>
         ) : null}
       </box>
@@ -91,7 +91,7 @@ function RefreshStatus({ label }: { label: string }) {
   const frame = useSpinnerFrame();
   return (
     <text fg="#60a5fa">
-      {"  "}{SPINNER_FRAMES[frame]} {label}
+      {SPINNER_FRAMES[frame]} {label}
     </text>
   );
 }
@@ -99,7 +99,7 @@ function RefreshStatus({ label }: { label: string }) {
 function CopiedNotice() {
   return (
     <text fg={BUCKET_COLOR.success} selectable={false}>
-      {"  "}copied to clipboard
+      copied to clipboard
     </text>
   );
 }
@@ -600,7 +600,7 @@ export function App() {
 
   if (!model.booted) {
     return (
-      <ScreenPanel title="startup" footer="q quit">
+      <ScreenPanel title="startup" keyHelp="q quit">
         <text>Checking glab…</text>
       </ScreenPanel>
     );
@@ -608,7 +608,7 @@ export function App() {
 
   if (model.error) {
     return (
-      <ScreenPanel title="error" footer={model.errorFatal ? "q quit" : "esc back  q quit"}>
+      <ScreenPanel title="error" keyHelp={model.errorFatal ? "q quit" : "esc back  q quit"}>
         <text fg="#ef4444">{model.error}</text>
       </ScreenPanel>
     );
@@ -619,7 +619,7 @@ export function App() {
     return (
       <ScreenPanel
         title={`log ${job?.name ?? "job"}`}
-        footer={`${model.logDone ? "ended" : "live"} · y yank · esc back`}
+        keyHelp={`${model.logDone ? "ended" : "live"} · y yank · esc back`}
         status={copiedNotice ? <CopiedNotice /> : undefined}
       >
         <scrollbox focused flexGrow={1} stickyScroll>
@@ -649,7 +649,7 @@ export function App() {
     return (
       <ScreenPanel
         title={`attempts ${card?.name ?? "job"}`}
-        footer="enter log  esc graph  q quit"
+        keyHelp="enter log  esc graph  q quit"
         status={refreshing === "graph" ? <RefreshStatus label="refreshing…" /> : undefined}
         loadingLabel={
           model.navigating?.kind === "logs"
@@ -677,7 +677,7 @@ export function App() {
     return (
       <ScreenPanel
         title={`pipeline ${model.graph?.iid ?? ""}`}
-        footer="arrows move  enter log  r refresh  esc list  q quit"
+        keyHelp="arrows move  enter log  r refresh  esc list  q quit"
         status={refreshing === "graph" ? <RefreshStatus label="refreshing…" /> : undefined}
         loadingLabel={
           model.navigating?.kind === "logs"
@@ -707,7 +707,7 @@ export function App() {
   return (
     <ScreenPanel
       title="pipelines"
-      footer="enter graph  r refresh  q quit"
+      keyHelp="enter graph  r refresh  q quit"
       status={refreshing === "list" ? <RefreshStatus label="refreshing…" /> : undefined}
       loadingLabel={
         model.navigating?.kind === "graph"
