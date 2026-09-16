@@ -458,6 +458,7 @@ export function App() {
         } else {
           dispatch({
             type: "refreshError",
+            source: "list",
             message: error instanceof Error ? error.message : String(error),
           });
         }
@@ -520,6 +521,7 @@ export function App() {
         } else {
           dispatch({
             type: "refreshError",
+            source: "graph",
             message: error instanceof Error ? error.message : String(error),
           });
         }
@@ -662,6 +664,7 @@ export function App() {
       dispatch({
         type: "refreshError",
         message: error instanceof Error ? error.message : String(error),
+        source: "graph",
       }),
     );
   };
@@ -761,6 +764,7 @@ export function App() {
             dispatch({
               type: "refreshError",
               message: error instanceof Error ? error.message : String(error),
+              source: "list",
             }),
           );
       }
@@ -812,6 +816,7 @@ export function App() {
           dispatch({
             type: "refreshError",
             message: error instanceof Error ? error.message : String(error),
+            source: "graph",
           }),
         );
       }

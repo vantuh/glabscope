@@ -3239,3 +3239,45 @@ test("a confirmation held for a refresh never runs a job the refresh says is alr
 });
 
 
+
+test("a list refresh failing never releases a graph confirmation", async () => {
+  graphGate.resolve(manualGraph());
+  const setup = await mountApp();
+  try {
+    // A manual list refresh whose answer is still outstanding.
+    const listHeld = Promise.withResolvers<PipelineRow[]>();
+    listGate = listHeld;
+    setup.mockInput.pressKey("r");
+    await waitForFrame(setup, (f) => f.includes("Refreshing…"), "list refresh overlay");
+
+    // Open the graph while that refresh is unanswered, then start a graph
+    // refresh and confirm a run against it.
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (f) => f.includes("pipeline 5"), "graph screen");
+    const graphHeld = Promise.withResolvers<PipelineGraph>();
+    graphGate = graphHeld;
+    setup.mockInput.pressKey("r");
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitForFrame(setup, (f) => f.includes("enter confirm"), "run prompt");
+    setup.mockInput.pressEnter();
+    await waitForFrame(
+      setup,
+      (f) => f.includes("waiting for the refresh…"),
+      "held confirmation",
+    );
+
+    // The old list request failing must not release the hold.
+    listHeld.reject(new Error("list failed"));
+    await Bun.sleep(30);
+    await setup.renderOnce();
+    expect(playCalls).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("waiting for the refresh…");
+
+    // The graph's own answer does end it, and the run starts once.
+    graphHeld.resolve(manualGraph());
+    await waitFor(() => playCalls.length === 1, "run after the graph answer");
+    expect(playCalls).toEqual(["99"]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
