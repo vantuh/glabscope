@@ -101,8 +101,10 @@ export type Action =
   | { type: "retrySucceeded"; jobId: string | null }
   | { type: "retryFailed"; message: string }
   | { type: "logUnavailable"; message: string }
+  | { type: "openFailed"; message: string }
   | { type: "focusJob"; id: string }
   | { type: "openAttempts" }
+  | { type: "openAttemptsForBrowser" }
   | { type: "focusAttempt"; id: string }
   | { type: "openLogs" }
   | { type: "logsReady" }
@@ -194,6 +196,12 @@ function attemptFocusIndex(graph: PipelineGraph, card: JobNode | undefined, id: 
 const NEW_ATTEMPT_UNFOLLOWED = "retried, but the new attempt could not be followed";
 const JOB_GONE_MESSAGE = "that job is no longer in this pipeline";
 const JOB_CHANGED_MESSAGE = "that job's status changed while the prompt was open";
+/**
+ * The open key cannot tell which attempt of a retried job was meant, so it
+ * asks for a pick through the attempts screen instead of opening anything.
+ */
+const ATTEMPTS_PICK_NOTICE =
+  "this job has several attempts — pick one and press o again to open it";
 
 /**
  * Which job actions each screen offers. Retry is checked first, so a job that
@@ -512,6 +520,10 @@ export function reduce(model: AppModel, action: Action): AppModel {
       return { ...model, retry: null, confirm: null, retryMessage: action.message };
     case "logUnavailable":
       return leaveLogScreen(model, action.message);
+    case "openFailed":
+      // Opening mutates nothing, so a failure is only ever the non-fatal notice
+      // in the content area of whichever screen asked for it.
+      return { ...model, retryMessage: action.message };
     case "focusJob": {
       const index = model.graph?.jobs.findIndex((job) => job.id === action.id) ?? -1;
       if (index < 0) {
@@ -525,6 +537,18 @@ export function reduce(model: AppModel, action: Action): AppModel {
         return model;
       }
       return { ...model, screen: "attempts", focusedAttemptIndex: 0, retryMessage: null };
+    }
+    case "openAttemptsForBrowser": {
+      const job = focusedJob(model);
+      if (!job || !model.graph || jobAttempts(model.graph.jobs, job).length < 2) {
+        return model;
+      }
+      return {
+        ...model,
+        screen: "attempts",
+        focusedAttemptIndex: 0,
+        retryMessage: ATTEMPTS_PICK_NOTICE,
+      };
     }
     case "focusAttempt": {
       const card = focusedJob(model);

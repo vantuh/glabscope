@@ -424,6 +424,57 @@ test("enter on a retried card opens attempts; logs return there; esc returns to 
   expect(model.screen).toBe("graph");
 });
 
+test("the open key on a retried card enters the attempts chooser with a pick notice", () => {
+  const failed = {
+    ...job("lint"),
+    id: "gid://gitlab/Ci::Build/10",
+    numericId: "10",
+    retried: true,
+    status: "failed",
+    bucket: "failed" as const,
+  };
+  const latest = { ...job("lint"), id: "gid://gitlab/Ci::Build/12", numericId: "12" };
+  let model = reduce(emptyModel, { type: "openGraph", graph: graph([failed, latest]) });
+  expect(focusedJob(model)?.id).toBe(latest.id);
+
+  model = reduce(model, { type: "openAttemptsForBrowser" });
+  expect(model.screen).toBe("attempts");
+  expect(model.focusedAttemptIndex).toBe(0);
+  // Newest first, so index 0 is the attempt the open key would have opened.
+  expect(focusedAttempt(model)?.numericId).toBe("12");
+  expect(model.retryMessage).toBe(
+    "this job has several attempts — pick one and press o again to open it",
+  );
+});
+
+test("a failed open is only a non-fatal notice", () => {
+  const model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  const failed = reduce(model, {
+    type: "openFailed",
+    message: "the browser could not be launched",
+  });
+  expect(failed.retryMessage).toBe("the browser could not be launched");
+  // Nothing fatal, and the screen the operator was on stays put.
+  expect(failed.error).toBeNull();
+  expect(failed.errorFatal).toBe(false);
+  expect(failed.screen).toBe("graph");
+});
+
+test("the open key on a card with one attempt changes nothing", () => {
+  const model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  expect(reduce(model, { type: "openAttemptsForBrowser" })).toEqual(model);
+});
+
+test("the confirm key's route into the attempts list stays silent", () => {
+  const failed = { ...job("lint"), id: "10", numericId: "10", retried: true };
+  const latest = { ...job("lint"), id: "12", numericId: "12" };
+  const model = reduce(emptyModel, { type: "openGraph", graph: graph([failed, latest]) });
+  const attempts = reduce(model, { type: "openAttempts" });
+  expect(attempts.screen).toBe("attempts");
+  expect(attempts.focusedAttemptIndex).toBe(0);
+  expect(attempts.retryMessage).toBeNull();
+});
+
 test("graph polling continues on the attempts screen", () => {
   const failed = { ...job("lint"), id: "10", numericId: "10", retried: true };
   const latest = { ...job("lint"), id: "12", numericId: "12" };
