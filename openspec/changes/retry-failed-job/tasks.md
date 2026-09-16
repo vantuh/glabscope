@@ -5,8 +5,8 @@ Superseded by the latest-attempt decision (design decision 5): the jobs connecti
 
 ## 2. Retry Command Wrapper
 
-- [ ] 2.1 Add `src/glab/retry.ts` with `retryJob(jobId)` calling `glab ci retry <job-id>` through `runGlab` and `parseRetriedJobId(stdout)` reading `Retried job (ID: <id>)`. Verify unit tests cover the fixture stdout, stdout wrapped in SGR sequences, a nonzero exit surfacing stderr, and stdout without the pattern returning no id.
-- [ ] 2.2 Add `isRetryableJob(job)` in the same module: `failed` and `canceled` statuses only, and never a bridge/trigger job. Verify unit tests cover every status the graph can show (failed, canceled, success, running, pending, skipped, manual, created) and a bridge job whose status is failed.
+- [x] 2.1 Add `src/glab/retry.ts` with `retryJob(jobId)` calling `glab ci retry <job-id>` through `runGlab` and `parseRetriedJobId(stdout)` reading `Retried job (ID: <id>)`. Verify unit tests cover the fixture stdout, stdout wrapped in SGR sequences, a nonzero exit surfacing stderr, and stdout without the pattern returning no id.
+- [x] 2.2 Add `isRetryableJob(job)` in the same module: `failed` and `canceled` statuses only, and never a bridge/trigger job. Verify unit tests cover every status the graph can show (failed, canceled, success, running, pending, skipped, manual, created) and a bridge job whose status is failed.
 
 ## 3. Latest Attempt in the Graph
 
