@@ -1152,6 +1152,9 @@ test("a status that overflows the row stays whole while the help text truncates"
 
 test("watch refresh discovers a job retried while the pipeline was terminal", async () => {
   const { scheduled } = capturePollTimers();
+  // A running list row keeps the list loop on NORMAL_POLL_MS, so the only
+  // source of IDLE_POLL_MS below is the graph loop's watch interval.
+  listDefault = [runningRow(42, 5)];
   graphGate.resolve(
     graphFor("SUCCESS", [jobIn("build", "99", "success")]),
   );
