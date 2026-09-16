@@ -71,6 +71,8 @@ Update it after a `git pull` by rebuilding. The installed entry points at the bu
 git pull && bun run build
 ```
 
+When a build fails, the installer removes its own entry instead of leaving the command running a binary that build did not produce. Fix the build and run the installer again to restore the command.
+
 Remove it with:
 
 ```bash
