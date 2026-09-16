@@ -1,11 +1,15 @@
 import type { PipelineRow } from "./glab/list.ts";
 import { isRetryableJob } from "./glab/retry.ts";
+import { isPlayableJob } from "./glab/play.ts";
 import { jobAttempts, latestJobs, type JobNode, type PipelineGraph } from "./glab/graph.ts";
 import { buildStageColumns } from "./layout/stage-graph.ts";
 import { isActivePipelineStatus } from "./status.ts";
 import { appendLogTrace, emptyLogTrace, logVisibleText, type LogTrace } from "./log-text.ts";
 
 export type Screen = "list" | "graph" | "attempts" | "logs";
+
+/** The two job actions the retry key can take on a focused job. */
+export type JobActionKind = "retry" | "play";
 
 export type Navigating =
   | { kind: "graph"; pipelineIid: string }
@@ -19,8 +23,14 @@ export type AppModel = {
   refreshWarning: string | null;
   /** One-shot manual refresh in flight, per screen. */
   manualRefresh: "list" | "graph" | null;
-  /** One restart in flight, and the screen it was started from. */
-  retry: { jobId: string; screen: Screen } | null;
+  /** The one job action in flight, the screen it was started from, and its kind. */
+  retry: { jobId: string; screen: Screen; kind: JobActionKind } | null;
+  /**
+   * The job action waiting for the operator's confirmation. The job's name is
+   * stored so the prompt can still name it after a refresh drops it from the
+   * graph.
+   */
+  confirm: { kind: JobActionKind; jobId: string; name: string } | null;
   /**
    * Non-fatal retry notice: a local refusal, a GitLab rejection, or the reason
    * a log screen gave up. Kept until the next navigation or retry, so a
@@ -48,6 +58,7 @@ export const emptyModel: AppModel = {
   refreshWarning: null,
   manualRefresh: null,
   retry: null,
+  confirm: null,
   retryMessage: null,
   booted: false,
   pipelines: [],
@@ -72,7 +83,9 @@ export type Action =
   | { type: "refreshGraph"; graph: PipelineGraph }
   | { type: "refreshError"; message: string }
   | { type: "manualRefresh"; target: "list" | "graph" }
-  | { type: "startRetry"; job: JobNode }
+  | { type: "requestJobAction"; job: JobNode }
+  | { type: "cancelJobAction" }
+  | { type: "confirmJobAction" }
   | { type: "retrySucceeded"; jobId: string | null }
   | { type: "retryFailed"; message: string }
   | { type: "logUnavailable"; message: string }
@@ -167,10 +180,74 @@ function attemptFocusIndex(graph: PipelineGraph, card: JobNode | undefined, id: 
 }
 
 const NEW_ATTEMPT_UNFOLLOWED = "retried, but the new attempt could not be followed";
+const JOB_GONE_MESSAGE = "that job is no longer in this pipeline";
 
-function retryRefusalMessage(job: Pick<JobNode, "isBridge">): string {
-  return job.isBridge
-    ? "this job cannot be retried here"
+/**
+ * Which job actions each screen offers. Retry is checked first, so a job that
+ * could be both is retried; only the graph runs a waiting manual job.
+ */
+const SCREEN_ACTIONS: Record<Screen, readonly JobActionKind[]> = {
+  list: [],
+  graph: ["retry", "play"],
+  attempts: ["retry"],
+  logs: ["retry"],
+};
+
+function offersRun(screen: Screen): boolean {
+  return SCREEN_ACTIONS[screen].includes("play");
+}
+
+/** The action this key would take on `job` from `screen`, or null when it has none. */
+export function jobActionKind(
+  job: Pick<JobNode, "status" | "isBridge">,
+  screen: Screen,
+): JobActionKind | null {
+  const allowed = SCREEN_ACTIONS[screen];
+  if (allowed.includes("retry") && isRetryableJob(job)) {
+    return "retry";
+  }
+  if (allowed.includes("play") && isPlayableJob(job)) {
+    return "play";
+  }
+  return null;
+}
+
+function graphJobById(model: AppModel, id: string): JobNode | undefined {
+  return model.graph?.jobs.find((job) => job.numericId === id);
+}
+
+/**
+ * The job the open confirmation would act on, re-checked against the current
+ * graph: a job that left the pipeline, or whose status changed while the prompt
+ * was open, must not be started.
+ */
+export function pendingJobAction(
+  model: AppModel,
+): { job: JobNode; kind: JobActionKind } | null {
+  const pending = model.confirm;
+  if (!pending) {
+    return null;
+  }
+  const job = graphJobById(model, pending.jobId);
+  if (!job) {
+    return null;
+  }
+  const kind = jobActionKind(job, model.screen);
+  return kind ? { job, kind } : null;
+}
+
+/** Why the open prompt can no longer be honoured. */
+function confirmRefusalMessage(model: AppModel): string {
+  const job = model.confirm ? graphJobById(model, model.confirm.jobId) : undefined;
+  return job ? jobActionRefusalMessage(job, model.screen) : JOB_GONE_MESSAGE;
+}
+
+function jobActionRefusalMessage(job: Pick<JobNode, "isBridge">, screen: Screen): string {
+  if (job.isBridge) {
+    return "this job cannot be restarted here";
+  }
+  return offersRun(screen)
+    ? "only failed or canceled jobs can be retried, and only waiting manual jobs can be run"
     : "only failed or canceled jobs can be retried";
 }
 
@@ -185,6 +262,7 @@ function leaveLogScreen(model: AppModel, message: string): AppModel {
   return {
     ...model,
     retry: null,
+    confirm: null,
     retryMessage: message,
     screen: "graph",
     logJobId: null,
@@ -267,6 +345,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
         errorFatal: false,
         refreshWarning: null,
         manualRefresh: null,
+        confirm: null,
         retryMessage: null,
         navigating: null,
       };
@@ -306,16 +385,42 @@ export function reduce(model: AppModel, action: Action): AppModel {
       return { ...model, refreshWarning: action.message, manualRefresh: null };
     case "manualRefresh":
       return { ...model, manualRefresh: action.target };
-    case "startRetry": {
-      if (model.retry) {
+    case "requestJobAction": {
+      // One job action at a time, and one prompt at a time.
+      if (model.retry || model.confirm) {
         return model;
       }
-      if (!isRetryableJob(action.job)) {
-        return { ...model, retryMessage: retryRefusalMessage(action.job) };
+      const kind = jobActionKind(action.job, model.screen);
+      if (!kind) {
+        return {
+          ...model,
+          retryMessage: jobActionRefusalMessage(action.job, model.screen),
+        };
       }
       return {
         ...model,
-        retry: { jobId: action.job.numericId, screen: model.screen },
+        confirm: { kind, jobId: action.job.numericId, name: action.job.name },
+        retryMessage: null,
+      };
+    }
+    case "cancelJobAction":
+      return model.confirm ? { ...model, confirm: null } : model;
+    case "confirmJobAction": {
+      if (!model.confirm) {
+        return model;
+      }
+      const resolved = pendingJobAction(model);
+      if (!resolved) {
+        return { ...model, confirm: null, retryMessage: confirmRefusalMessage(model) };
+      }
+      return {
+        ...model,
+        confirm: null,
+        retry: {
+          jobId: resolved.job.numericId,
+          screen: model.screen,
+          kind: resolved.kind,
+        },
         retryMessage: null,
       };
     }
@@ -334,7 +439,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
       return { ...model, retry: null };
     }
     case "retryFailed":
-      return { ...model, retry: null, retryMessage: action.message };
+      return { ...model, retry: null, confirm: null, retryMessage: action.message };
     case "logUnavailable":
       return leaveLogScreen(model, action.message);
     case "focusJob": {
