@@ -71,27 +71,3 @@ export function buildDag(jobs: JobNode[]): RankedDag {
 
   return { jobs, edges, ranks };
 }
-
-export function formatJobLine(job: JobNode, focusedId: string | undefined): string {
-  const mark = job.id === focusedId ? ">" : " ";
-  const deps =
-    job.needsNames.length > 0 ? ` <- ${job.needsNames.join(", ")}` : "";
-  return `${mark}[${job.name}]${deps}`;
-}
-
-export function visualJobs(dag: RankedDag): JobNode[] {
-  return dag.ranks.flat();
-}
-
-export function renderDagAscii(
-  dag: RankedDag,
-  focusedId: string | undefined,
-  viewport: { width: number; height: number; scrollX?: number; scrollY?: number },
-): string[] {
-  const full = visualJobs(dag).map((job) => formatJobLine(job, focusedId));
-  const scrollX = viewport.scrollX ?? 0;
-  const scrollY = viewport.scrollY ?? 0;
-  return full
-    .slice(scrollY, scrollY + viewport.height)
-    .map((line) => line.slice(scrollX, scrollX + viewport.width));
-}

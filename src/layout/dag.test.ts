@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { JobNode } from "../glab/graph.ts";
 import { parsePipelineGraph } from "../glab/graph.ts";
 import fixture from "../fixtures/pipeline-jobs-needs.json";
-import { buildDag, renderDagAscii } from "./dag.ts";
+import { buildDag } from "./dag.ts";
 
 function job(
   name: string,
@@ -42,21 +42,14 @@ test("stages-only jobs do not invent edges", () => {
   expect(dag.ranks[0]?.map((item) => item.name)).toEqual(["lint", "test", "build"]);
 });
 
-test("viewport clips ASCII output", () => {
-  const dag = buildDag([job("A"), job("B", ["A"])]);
-  const lines = renderDagAscii(dag, "B", { width: 8, height: 1, scrollX: 0, scrollY: 0 });
-  expect(lines).toHaveLength(1);
-  expect(lines[0]?.length).toBeLessThanOrEqual(8);
-  expect(renderDagAscii(dag, "B", { width: 80, height: 4 }).join("\n")).toContain("[B]");
-  expect(renderDagAscii(dag, "B", { width: 80, height: 4 }).join("\n")).toContain("<- A");
-});
-
-test("real fixture renders only named needs, not positional arrows", () => {
+test("fixture edges are named needs only", () => {
   const graph = parsePipelineGraph(fixture);
   const dag = buildDag(graph.jobs);
-  const text = renderDagAscii(dag, undefined, { width: 200, height: 40 }).join("\n");
-  expect(text).not.toContain("-->");
-  expect(text).not.toContain("owasp-dependency-check --> sonarqube");
-  expect(text).toContain("[sonarqube] <- tests");
-  expect(text).toContain("[qualityspy-v2] <- sonarqube, tests");
+  const byId = new Map(graph.jobs.map((item) => [item.id, item]));
+  expect(dag.edges.length).toBeGreaterThan(0);
+  for (const edge of dag.edges) {
+    const from = byId.get(edge.fromId);
+    const to = byId.get(edge.toId);
+    expect(from && to && to.needsNames.includes(from.name)).toBe(true);
+  }
 });
