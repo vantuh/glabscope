@@ -17,4 +17,4 @@
 ## 4. Verification
 
 - [x] 4.1 Run the full `bun test` suite and `./node_modules/.bin/tsc --noEmit` and verify both are green with no new failures against the pre-change baseline (173 passing tests, clean type check at plan time; 200 passing after this change).
-- [ ] 4.2 Run `bun start` from a GitLab-bound working tree and verify by eye that columns line up, names read as `!N`/branch/tag, ages advance across a poll cycle without a manual refresh, and narrowing the terminal drops the started column instead of wrapping rows; record the observed outcome in the change (or state it as not run).
+- [x] 4.2 Run `bun start` from a GitLab-bound working tree and verify by eye that columns line up, names read as `!N`/branch/tag, ages advance across a poll cycle without a manual refresh, and narrowing the terminal drops the started column instead of wrapping rows; operator ran it from their own GitLab-bound working tree and confirmed the result.
