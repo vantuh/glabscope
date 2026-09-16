@@ -361,12 +361,11 @@ export function App() {
       }
       setRefreshing("graph");
       try {
-        const graph = await fetchPipelineGraph(String(iid));
+        const graph = await fetchGraphNow(String(iid));
         if (stopped) {
           return;
         }
         setRefreshing(null);
-        dispatch({ type: "refreshGraph", graph });
         delay = isActivePipelineStatus(graph.status)
           ? nextPollDelay(delay, false)
           : IDLE_POLL_MS;
@@ -420,11 +419,14 @@ export function App() {
     try {
       proc = spawnTrace(jobId);
     } catch (error) {
-      dispatch({
-        type: "error",
-        message: error instanceof Error ? error.message : String(error),
-        fatal: false,
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      // A log screen that is already open has no navigation left to fail:
+      // send the operator back to the graph instead of leaving it inert.
+      dispatch(
+        model.screen === "logs"
+          ? { type: "logUnavailable", message }
+          : { type: "error", message, fatal: false },
+      );
       return;
     }
     logProc.current = proc;
@@ -434,7 +436,9 @@ export function App() {
       const decoder = new TextDecoder();
       while (!cancelled) {
         const { done, value } = await reader.read();
-        if (done) {
+        // A read that was already in flight when this trace was replaced must
+        // not spill into the buffer of the attempt that replaced it.
+        if (done || cancelled) {
           break;
         }
         if (value) {
@@ -468,6 +472,31 @@ export function App() {
     () => (model.graph ? buildStageGraph(model.graph.jobs, model.graph.stageNames) : null),
     [model.graph],
   );
+
+  /**
+   * Graph fetches overlap (poll, manual refresh, a restart), so only the newest
+   * result may land: a poll that started before a restart must not put the
+   * superseded node back.
+   */
+  const graphRequestRef = useRef(0);
+  const fetchGraphNow = (iid: string) => {
+    const request = (graphRequestRef.current += 1);
+    return fetchPipelineGraph(iid).then((graph) => {
+      if (request === graphRequestRef.current) {
+        dispatch({ type: "refreshGraph", graph });
+      }
+      return graph;
+    });
+  };
+
+  const refreshGraphAfterRetry = (iid: string) => {
+    void fetchGraphNow(iid).catch((error: unknown) =>
+      dispatch({
+        type: "refreshError",
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  };
 
   /** Run the retry gate, then restart through glab only if the gate allows it. */
   const startRetry = (
@@ -549,29 +578,20 @@ export function App() {
         const job = focusedJob(model);
         const iid = model.graph.iid;
         if (job) {
-          startRetry(job, () => {
-            dispatch({ type: "retrySucceeded", jobId: null });
-            void fetchPipelineGraph(iid)
-              .then((graph) => dispatch({ type: "refreshGraph", graph }))
-              .catch((error: unknown) =>
-                dispatch({
-                  type: "refreshError",
-                  message: error instanceof Error ? error.message : String(error),
-                }),
-              );
+          startRetry(job, ({ jobId }) => {
+            dispatch({ type: "retrySucceeded", jobId });
+            refreshGraphAfterRetry(iid);
           });
         }
       }
       if (model.graph && key.name === "r" && !key.ctrl && navigatingRef.current === null && !model.manualRefresh) {
         dispatch({ type: "manualRefresh", target: "graph" });
-        void fetchPipelineGraph(model.graph.iid)
-          .then((graph) => dispatch({ type: "refreshGraph", graph }))
-          .catch((error: unknown) =>
-            dispatch({
-              type: "refreshError",
-              message: error instanceof Error ? error.message : String(error),
-            }),
-          );
+        void fetchGraphNow(model.graph.iid).catch((error: unknown) =>
+          dispatch({
+            type: "refreshError",
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        );
       }
       const currentId = focusedJob(model)?.id;
       if (
@@ -608,10 +628,32 @@ export function App() {
         announceCopy();
       }
     }
-    if (model.screen === "logs" && model.graph && isRetryKey(key) && navigatingRef.current === null && retryRef.current === null) {
-      const job = tracedJob(model);
-      if (job) {
-        startRetry(job, ({ jobId }) => dispatch({ type: "retrySucceeded", jobId }));
+    if (
+      model.screen === "logs" &&
+      model.graph &&
+      isRetryKey(key) &&
+      navigatingRef.current === null &&
+      retryRef.current === null
+    ) {
+      const traced = tracedJob(model);
+      // The traced attempt is the only job this key may restart; falling back
+      // to whatever the stale graph still focuses would retry the attempt that
+      // was just replaced.
+      if (traced && traced.numericId === model.logJobId) {
+        const iid = model.graph.iid;
+        startRetry(traced, ({ jobId }) => {
+          dispatch({ type: "retrySucceeded", jobId });
+          if (jobId) {
+            // Learn the new attempt's status, so the next press is gated on it
+            // rather than on the attempt it replaced.
+            refreshGraphAfterRetry(iid);
+          }
+        });
+      } else {
+        dispatch({
+          type: "retryFailed",
+          message: "the traced attempt is not in the current job list",
+        });
       }
     }
     if (model.screen === "attempts" && model.graph) {

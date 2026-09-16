@@ -14,11 +14,14 @@ let graphGate = Promise.withResolvers<PipelineGraph>();
 let spawnCalls = 0;
 let spawnJobIds: string[] = [];
 let spawnShouldThrow = false;
+let spawnFailFromCall: number | null = null;
+let procKills = 0;
 let retryCalls: string[] = [];
 let retryGate: PromiseWithResolvers<{ jobId: string | null }> | null = null;
 let retryError: string | null = null;
 let traceStaysLive = false;
 let traceStdout: Uint8Array | null = null;
+let traceStreams: QueuedTrace[] = [];
 let listCalls = 0;
 let listScript: (PipelineRow[] | Error)[] = [];
 let listDefault: PipelineRow[] = [];
@@ -69,17 +72,42 @@ function bytesStream(bytes: Uint8Array) {
 }
 
 function fakeProc(): ReturnType<typeof Bun.spawn> {
-  const stdout = traceStdout
-    ? bytesStream(traceStdout)
-    : traceStaysLive
-      ? new ReadableStream<Uint8Array>({})
-      : closedStream();
+  const queued = traceStreams.shift();
+  const live = queued !== undefined || traceStaysLive;
+  const stdout =
+    queued?.stream ??
+    (traceStdout
+      ? bytesStream(traceStdout)
+      : traceStaysLive
+        ? new ReadableStream<Uint8Array>({})
+        : closedStream());
   return {
     stdout,
-    stderr: traceStaysLive ? new ReadableStream<Uint8Array>({}) : closedStream(),
-    exited: traceStaysLive ? new Promise(() => {}) : Promise.resolve(0),
-    kill() {},
+    stderr: live ? new ReadableStream<Uint8Array>({}) : closedStream(),
+    exited: live ? new Promise(() => {}) : Promise.resolve(0),
+    kill() {
+      procKills += 1;
+    },
   } as ReturnType<typeof Bun.spawn>;
+}
+
+/** A trace process whose output the test releases chunk by chunk. */
+type QueuedTrace = {
+  stream: ReadableStream<Uint8Array>;
+  write: (text: string) => void;
+};
+
+function queuedTrace(): QueuedTrace {
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const stream = new ReadableStream<Uint8Array>({
+    start(next) {
+      controller = next;
+    },
+  });
+  return {
+    stream,
+    write: (text: string) => controller?.enqueue(new TextEncoder().encode(text)),
+  };
 }
 
 import type { CapturedSpan } from "@opentui/core";
@@ -200,9 +228,12 @@ beforeEach(() => {
   spawnCalls = 0;
   spawnJobIds = [];
   spawnShouldThrow = false;
+  spawnFailFromCall = null;
+  procKills = 0;
   retryCalls = [];
   retryGate = null;
   retryError = null;
+  traceStreams = [];
   traceStaysLive = false;
   traceStdout = null;
   listCalls = 0;
@@ -259,7 +290,7 @@ beforeEach(() => {
   spyOn(traceModule, "spawnTrace").mockImplementation((jobId: string) => {
     spawnCalls += 1;
     spawnJobIds.push(jobId);
-    if (spawnShouldThrow) {
+    if (spawnShouldThrow || spawnFailFromCall === spawnCalls) {
       throw new Error("spawn failed");
     }
     return fakeProc();
@@ -1729,23 +1760,26 @@ async function openFailedGraph(setup: Awaited<ReturnType<typeof testRender>>) {
   await waitForFrame(setup, (frame) => frame.includes("pipeline 5"), "graph screen");
 }
 
-function focusedRow(frame: string, name: string): boolean {
-  return frame
-    .split("\n")
-    .some((line) => line.includes("▸") && line.includes(name));
+/** Cards can share a row, so match the focus marker and its card label together. */
+function focusedCard(frame: string, icon: string, name: string): boolean {
+  return frame.includes(`▸ ${icon} ${name}`);
 }
 
 test("ctrl+r retries the focused failed job and keeps the graph on it", async () => {
+  // `build` is the leftmost card, so `lint` is not the card a fallback would
+  // land on: focus must follow the job, not the first card.
   graphGate.resolve(
     graphFor("FAILED", [
-      { ...jobIn("lint", "10", "failed"), stage: "test" },
       jobIn("build", "11", "success"),
+      { ...jobIn("lint", "10", "failed"), stage: "test" },
     ]),
   );
   const setup = await testRender(<App />, { width: 100, height: 20 });
   try {
     await openFailedGraph(setup);
-    await waitForFrame(setup, (frame) => focusedRow(frame, "lint"), "focus on the failed job");
+    await waitForFrame(setup, (frame) => focusedCard(frame, statusIcon("success"), "build"), "focus on the first card");
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    await waitForFrame(setup, (frame) => focusedCard(frame, statusIcon("failed"), "lint"), "focus on the failed job");
     const callsBefore = fetchGraphCalls.length;
 
     retryGate = Promise.withResolvers();
@@ -1756,22 +1790,23 @@ test("ctrl+r retries the focused failed job and keeps the graph on it", async ()
 
     // The in-flight mark does not block navigation.
     setup.mockInput.pressKey("ARROW_RIGHT");
-    await waitForFrame(setup, (frame) => focusedRow(frame, "build"), "moved to the next stage");
+    await waitForFrame(setup, (frame) => focusedCard(frame, statusIcon("failed"), "lint"), "stayed on the job");
     setup.mockInput.pressKey("ARROW_LEFT");
-    await waitForFrame(setup, (frame) => focusedRow(frame, "lint"), "moved back to the job");
+    await waitForFrame(setup, (frame) => focusedCard(frame, statusIcon("success"), "build"), "moved to the left stage");
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    await waitForFrame(setup, (frame) => focusedCard(frame, statusIcon("failed"), "lint"), "moved back to the job");
 
     graphScript = [
       graphFor("RUNNING", [
+        jobIn("build", "11", "success"),
         { ...jobIn("lint", "10", "failed"), retried: true, stage: "test" },
         { ...jobIn("lint", "12", "running"), stage: "test" },
-        jobIn("build", "11", "success"),
       ]),
     ];
     retryGate.resolve({ jobId: "12" });
     const frame = await waitForFrame(
       setup,
-      (frame) =>
-        frame.includes(statusIcon("running")) && focusedRow(frame, "lint"),
+      (frame) => focusedCard(frame, statusIcon("running"), "lint"),
       "focus on the restarted attempt",
     );
     // The superseded attempt must not be the card in focus, and the graph was
@@ -1874,7 +1909,7 @@ test("a refused retry keeps the graph navigable with the reason", async () => {
     setup.mockInput.pressKey("ARROW_RIGHT");
     await waitForFrame(
       setup,
-      (frame) => focusedRow(frame, "build"),
+      (frame) => focusedCard(frame, statusIcon("success"), "build"),
       "navigation after the refusal",
     );
   } finally {
@@ -1904,8 +1939,15 @@ test("ctrl+r on the log restarts the traced job and streams the new attempt", as
   const setup = await testRender(<App />, { width: 80, height: 14 });
   try {
     await openFailedGraph(setup);
-    traceStdout = new TextEncoder().encode("old attempt failed\n");
+    const oldTrace = queuedTrace();
+    traceStreams.push(oldTrace);
     setup.mockInput.pressEnter();
+    await waitForFrame(
+      setup,
+      (frame) => frame.includes("live · ctrl+r retry"),
+      "live log screen",
+    );
+    oldTrace.write("old attempt failed\n");
     await waitForFrame(
       setup,
       (frame) => frame.includes("old attempt failed"),
@@ -1913,14 +1955,20 @@ test("ctrl+r on the log restarts the traced job and streams the new attempt", as
     );
     expect(spawnJobIds).toEqual(["99"]);
 
+    const newTrace = queuedTrace();
+    traceStreams.push(newTrace);
+    const killsBefore = procKills;
     retryGate = Promise.withResolvers();
-    traceStdout = new TextEncoder().encode("restarted attempt\n");
     setup.mockInput.pressKey("r", { ctrl: true });
     await waitFor(() => retryCalls.length === 1, "retry call");
     expect(retryCalls).toEqual(["99"]);
     await waitForFrame(setup, (frame) => frame.includes("retrying…"), "in-flight retry mark");
 
     retryGate.resolve({ jobId: "101" });
+    await waitFor(() => spawnJobIds.length === 2, "trace for the new attempt");
+    // Exactly the replaced tracer was killed; the new one is running.
+    expect(procKills).toBe(killsBefore + 1);
+    newTrace.write("restarted attempt\n");
     const frame = await waitForFrame(
       setup,
       (frame) => frame.includes("restarted attempt"),
@@ -1930,6 +1978,112 @@ test("ctrl+r on the log restarts the traced job and streams the new attempt", as
     expect(frame).not.toContain("old attempt failed");
     expect(frame).not.toContain("retrying…");
     expect(frame).toContain("log build");
+    // The screen is following a live process again, not a finished one.
+    expect(frame).toContain("live · ctrl+r retry");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a chunk from the replaced attempt cannot land in the restarted log", async () => {
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 80, height: 14 });
+  try {
+    await openFailedGraph(setup);
+    const oldTrace = queuedTrace();
+    traceStreams.push(oldTrace);
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("live · ctrl+r retry"), "live log");
+    oldTrace.write("old attempt output\n");
+    await waitForFrame(setup, (frame) => frame.includes("old attempt output"), "first chunk");
+
+    const newTrace = queuedTrace();
+    traceStreams.push(newTrace);
+    const killsBefore = procKills;
+    retryGate = Promise.withResolvers();
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitFor(() => retryCalls.length === 1, "retry call");
+    retryGate.resolve({ jobId: "101" });
+    await waitFor(() => spawnJobIds.length === 2, "trace for the new attempt");
+
+    // The replaced tracer is dead, but a chunk already in flight must not
+    // reach the buffer that was cleared for the new attempt.
+    oldTrace.write("stale from the old attempt\n");
+    newTrace.write("fresh output\n");
+    const frame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("fresh output"),
+      "new attempt output",
+    );
+    expect(frame).not.toContain("stale from the old attempt");
+    expect(frame).not.toContain("old attempt output");
+    expect(procKills).toBe(killsBefore + 1);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a retry from a log tracing an attempt the graph has not seen is refused", async () => {
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 80, height: 14 });
+  try {
+    await openFailedGraph(setup);
+    traceStdout = new TextEncoder().encode("boom\n");
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("boom"), "log screen");
+
+    retryGate = Promise.withResolvers();
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitFor(() => retryCalls.length === 1, "retry call");
+    traceStdout = new TextEncoder().encode("new attempt\n");
+    // The post-retry refresh returns a graph that does not carry the new
+    // attempt yet, so its status cannot be read.
+    retryGate.resolve({ jobId: "101" });
+    await waitFor(() => spawnJobIds.length === 2, "trace for the new attempt");
+    await waitFor(() => fetchGraphCalls.length >= 2, "post-retry graph refresh");
+
+    setup.mockInput.pressKey("r", { ctrl: true });
+    const frame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("the traced attempt is not in the current job list"),
+      "refusal for an attempt the graph cannot vouch for",
+    );
+    // The attempt that was already replaced is never restarted again.
+    expect(retryCalls).toEqual(["99"]);
+    expect(frame).toContain("new attempt");
+    expect(frame).toContain("log build");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("a spawn failure while replacing the trace returns to the graph", async () => {
+  graphGate.resolve(failedGraph());
+  const setup = await testRender(<App />, { width: 80, height: 14 });
+  try {
+    await openFailedGraph(setup);
+    traceStdout = new TextEncoder().encode("boom\n");
+    setup.mockInput.pressEnter();
+    await waitForFrame(setup, (frame) => frame.includes("boom"), "log screen");
+
+    // Hold the post-retry refresh so the reason this screen gave up survives
+    // the capture (a successful refresh clears the notice by design).
+    graphGate = Promise.withResolvers();
+    spawnFailFromCall = 2;
+    retryGate = Promise.withResolvers();
+    setup.mockInput.pressKey("r", { ctrl: true });
+    await waitFor(() => retryCalls.length === 1, "retry call");
+    retryGate.resolve({ jobId: "101" });
+
+    const frame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("spawn failed") && frame.includes("pipeline 5"),
+      "graph screen carrying the spawn reason",
+    );
+    expect(spawnJobIds).toEqual(["99", "101"]);
+    expect(frame).not.toContain("waiting for glab ci trace…");
+    expect(frame).not.toContain("log build");
+    expect(focusedCard(frame, statusIcon("failed"), "build")).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -1998,7 +2152,7 @@ test("a log retry whose new id cannot be read returns to the graph with a messag
       "unfollowable retry notice",
     );
     expect(frame).toContain("pipeline 5");
-    expect(focusedRow(frame, "build")).toBe(true);
+    expect(focusedCard(frame, statusIcon("failed"), "build")).toBe(true);
     // The log is gone, so no third trace was spawned.
     expect(spawnJobIds).toEqual(["99"]);
   } finally {
