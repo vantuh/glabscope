@@ -61,6 +61,38 @@ async function withPrefix<T>(fn: (prefix: string) => Promise<T>): Promise<T> {
   }
 }
 
+// A project-shaped temporary tree holding the real installer, a `bun` that
+// always fails, and optionally a runnable file where the artifact would be. It
+// lets the installer's failure paths run without touching this checkout's
+// build output.
+async function withFailingBuild<T>(
+  artifact: "missing" | "runnable",
+  fn: (project: string) => Promise<T>,
+): Promise<T> {
+  const project = await mkdtemp(join(tmpdir(), "glabscope-project-"));
+  try {
+    const bin = join(project, "bin");
+    await mkdir(join(project, "scripts"), { recursive: true });
+    await mkdir(bin);
+    await copyFile(INSTALL, join(project, "scripts", "install.sh"));
+    await writeFile(join(bin, "bun"), "#!/bin/sh\nexit 3\n");
+    await chmod(join(bin, "bun"), 0o755);
+    if (artifact === "runnable") {
+      await mkdir(join(project, "dist"));
+      await writeFile(join(project, "dist", "glabscope"), "#!/bin/sh\necho old\n");
+      await chmod(join(project, "dist", "glabscope"), 0o755);
+    }
+    return await fn(project);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
+}
+
+// `bun` resolves to the failing stub, so only the project tree's own tools run.
+function failingPath(project: string): string {
+  return `${join(project, "bin")}:/usr/bin:/bin`;
+}
+
 test("the installer links the command into the target directory", () =>
   withPrefix(async (prefix) => {
     const result = await run(INSTALL, prefix);
@@ -107,37 +139,58 @@ test("the installer refuses a directory at the entry path", () =>
     expect(await readdir(entry)).toEqual([]);
   }));
 
-test("a failed build drops our own entry instead of leaving it dangling", async () => {
-  const project = await mkdtemp(join(tmpdir(), "glabscope-project-"));
-  const prefix = await mkdtemp(join(tmpdir(), "glabscope-install-"));
-  try {
-    // A project-shaped tree: the real installer, no build output, and a `bun`
-    // that fails, so the script resolves its own root and fails its build.
-    const bin = join(project, "bin");
-    await mkdir(join(project, "scripts"), { recursive: true });
-    await mkdir(bin);
-    await copyFile(INSTALL, join(project, "scripts", "install.sh"));
-    await writeFile(join(bin, "bun"), "#!/bin/sh\nexit 3\n");
-    await chmod(join(bin, "bun"), 0o755);
-    // The installer resolves its own root physically, so the link it would own
-    // is spelled with the physical path.
-    await symlink(
-      join(await realpath(project), "dist", "glabscope"),
-      join(prefix, "glabscope"),
-    );
+test("installing through a symlinked path records the physical build output", () =>
+  withPrefix(async (prefix) => {
+    const alias = join(prefix, "alias");
+    await symlink(ROOT, alias);
 
-    const result = await run(join(project, "scripts", "install.sh"), prefix, {
-      PATH: `${bin}:/usr/bin:/bin`,
-    });
+    const installed = await run(join(alias, "scripts", "install.sh"), prefix);
 
-    expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain("build failed");
-    expect(await readdir(prefix)).toEqual([]);
-  } finally {
-    await rm(project, { recursive: true, force: true });
-    await rm(prefix, { recursive: true, force: true });
-  }
-});
+    expect(installed.code).toBe(0);
+    expect(await readlink(join(prefix, "glabscope"))).toBe(ARTIFACT);
+    // The entry installed through the alias is still recognised as ours when
+    // the project is addressed by its physical path.
+    const removed = await run(UNINSTALL, prefix);
+    expect(removed.code).toBe(0);
+    expect(await readdir(prefix)).toEqual(["alias"]);
+  }));
+
+test("a failed build drops our own entry instead of leaving it dangling", () =>
+  withFailingBuild("missing", (project) =>
+    withPrefix(async (prefix) => {
+      // The installer resolves its own root physically, so the link it would
+      // own is spelled with the physical path.
+      await symlink(
+        join(await realpath(project), "dist", "glabscope"),
+        join(prefix, "glabscope"),
+      );
+
+      const result = await run(join(project, "scripts", "install.sh"), prefix, {
+        PATH: failingPath(project),
+      });
+
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain("build failed");
+      expect(await readdir(prefix)).toEqual([]);
+    }),
+  ));
+
+test("a failed build drops our entry even when the previous artifact still runs", () =>
+  withFailingBuild("runnable", (project) =>
+    withPrefix(async (prefix) => {
+      await symlink(
+        join(await realpath(project), "dist", "glabscope"),
+        join(prefix, "glabscope"),
+      );
+
+      const result = await run(join(project, "scripts", "install.sh"), prefix, {
+        PATH: failingPath(project),
+      });
+
+      expect(result.code).not.toBe(0);
+      expect(await readdir(prefix)).toEqual([]);
+    }),
+  ));
 
 test("the uninstaller removes the link the installer created", () =>
   withPrefix(async (prefix) => {
