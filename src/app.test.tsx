@@ -3281,3 +3281,43 @@ test("a list refresh failing never releases a graph confirmation", async () => {
     setup.renderer.destroy();
   }
 });
+
+test("an obsolete graph failure is not reported as a refresh error", async () => {
+  listDefault = [runningRow(42, 5), row(43, 6, "success")];
+  const setup = await testRender(<App />, { width: 90, height: 18 });
+  try {
+    await waitForFrame(setup, (f) => f.includes("#42") && f.includes("#43"), "two pipelines");
+    graphGate.resolve(graphFor("RUNNING", [{ ...jobIn("job-five", "1", "running"), stage: "build" }]));
+    setup.mockInput.pressEnter();
+    // Hold every later graph fetch, including pipeline 5's own poll.
+    const heldPoll = Promise.withResolvers<PipelineGraph>();
+    graphGate = heldPoll;
+    await waitForFrame(setup, (f) => f.includes("job-five"), "pipeline 5 graph");
+
+    setup.mockInput.pressEscape();
+    await waitForFrame(setup, (f) => f.includes("> #42"), "back on the list");
+    setup.mockInput.pressKey("ARROW_DOWN");
+    await waitForFrame(setup, (f) => f.includes("> #43"), "pipeline 6 selected");
+    graphScript = [
+      { ...graphFor("SUCCESS", [{ ...jobIn("job-six", "2", "success"), stage: "build" }]), iid: "6" },
+    ];
+    setup.mockInput.pressEnter();
+    await waitForFrame(
+      setup,
+      (f) => f.includes("pipeline 6") && f.includes("job-six"),
+      "pipeline 6 graph",
+    );
+
+    // Pipeline 5's held poll fails only after the operator moved on: that is not
+    // an answer to the graph on screen, so it must not become a notice.
+    heldPoll.reject(new Error("poll failed"));
+    await Bun.sleep(30);
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("job-six");
+    expect(frame).toContain("pipeline 6");
+    expect(frame).not.toContain("refresh error");
+  } finally {
+    setup.renderer.destroy();
+  }
+});

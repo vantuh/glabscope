@@ -458,7 +458,7 @@ export function App() {
         } else {
           dispatch({
             type: "refreshError",
-            source: "list",
+            target: "list",
             message: error instanceof Error ? error.message : String(error),
           });
         }
@@ -503,7 +503,13 @@ export function App() {
       }
       setRefreshing("graph");
       try {
-        const graph = await fetchGraphNow(String(iid), () => stopped);
+        const graph = await fetchGraphNow(String(iid), () => stopped, (error) => {
+          dispatch({
+            type: "refreshError",
+            target: "graph",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
         if (stopped) {
           return;
         }
@@ -518,13 +524,9 @@ export function App() {
         setRefreshing(null);
         if (error instanceof RateLimitedError) {
           delay = nextPollDelay(delay, true);
-        } else {
-          dispatch({
-            type: "refreshError",
-            source: "graph",
-            message: error instanceof Error ? error.message : String(error),
-          });
         }
+        // Any other failure was reported by the guarded hook, which drops the
+        // answers of fetches this loop has already moved past.
       }
       if (!stopped) {
         timer = setTimeout(() => void tick(), delay);
@@ -649,24 +651,42 @@ export function App() {
    * canceled polling loop drop its own result before it dispatches.
    */
   const graphRequestRef = useRef(0);
-  const fetchGraphNow = (iid: string, isObsolete?: () => boolean) => {
+  const fetchGraphNow = (
+    iid: string,
+    isObsolete?: () => boolean,
+    onError?: (error: unknown) => void,
+  ) => {
     const request = (graphRequestRef.current += 1);
-    return fetchPipelineGraph(iid).then((graph) => {
-      if (request === graphRequestRef.current && !isObsolete?.()) {
-        dispatch({ type: "refreshGraph", graph });
-      }
-      return graph;
-    });
+    const isCurrent = () => request === graphRequestRef.current && !isObsolete?.();
+    return fetchPipelineGraph(iid).then(
+      (graph) => {
+        if (isCurrent()) {
+          dispatch({ type: "refreshGraph", graph });
+        }
+        return graph;
+      },
+      (error: unknown) => {
+        // Only the newest request may report: an answer to a fetch the operator
+        // has already moved past is not a graph answer, so it must not become a
+        // refresh notice — nor release a held confirmation.
+        if (isCurrent()) {
+          onError?.(error);
+        }
+        throw error;
+      },
+    );
   };
 
   const refreshGraphAfterRetry = (iid: string) => {
-    void fetchGraphNow(iid).catch((error: unknown) =>
+    void fetchGraphNow(iid, undefined, (error: unknown) =>
       dispatch({
         type: "refreshError",
+        target: "graph",
         message: error instanceof Error ? error.message : String(error),
-        source: "graph",
       }),
-    );
+    ).catch(() => {
+      // Already reported by the guarded hook above.
+    });
   };
 
   /**
@@ -763,8 +783,8 @@ export function App() {
           .catch((error: unknown) =>
             dispatch({
               type: "refreshError",
+              target: "list",
               message: error instanceof Error ? error.message : String(error),
-              source: "list",
             }),
           );
       }
@@ -812,13 +832,15 @@ export function App() {
       }
       if (model.graph && key.name === "r" && !key.ctrl && navigatingRef.current === null && !model.manualRefresh) {
         dispatch({ type: "manualRefresh", target: "graph" });
-        void fetchGraphNow(model.graph.iid).catch((error: unknown) =>
+        void fetchGraphNow(model.graph.iid, undefined, (error: unknown) =>
           dispatch({
             type: "refreshError",
+            target: "graph",
             message: error instanceof Error ? error.message : String(error),
-            source: "graph",
           }),
-        );
+        ).catch(() => {
+          // Already reported by the guarded hook above.
+        });
       }
       const currentId = focusedJob(model)?.id;
       if (

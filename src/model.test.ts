@@ -250,7 +250,7 @@ test("refreshError keeps the current data and is non-fatal", () => {
     pipelines: [pipeline(30, 3), pipeline(20, 2, "running")],
   });
   model = reduce(model, { type: "moveList", delta: 1 });
-  model = reduce(model, { type: "refreshError", source: "graph", message: "429 Too Many Requests" });
+  model = reduce(model, { type: "refreshError", target: "graph", message: "429 Too Many Requests" });
   expect(model.refreshWarning).toBe("429 Too Many Requests");
   expect(model.error).toBeNull();
   expect(model.errorFatal).toBe(false);
@@ -265,14 +265,14 @@ test("refreshError does not touch user-action errors", () => {
     pipelines: [pipeline(1, 1, "running")],
   });
   model = reduce(model, { type: "error", message: "graph failed", fatal: false });
-  model = reduce(model, { type: "refreshError", source: "graph", message: "list failed" });
+  model = reduce(model, { type: "refreshError", target: "graph", message: "list failed" });
   expect(model.error).toBe("graph failed");
   expect(model.refreshWarning).toBe("list failed");
 });
 
 test("a successful refresh clears a recovered refresh warning", () => {
   let model = reduce(emptyModel, { type: "pipelines", pipelines: [pipeline(1, 1)] });
-  model = reduce(model, { type: "refreshError", source: "graph", message: "list failed" });
+  model = reduce(model, { type: "refreshError", target: "graph", message: "list failed" });
   expect(model.refreshWarning).toBe("list failed");
   model = reduce(model, { type: "pipelines", pipelines: [pipeline(1, 1), pipeline(2, 2, "running")] });
   expect(model.refreshWarning).toBeNull();
@@ -286,7 +286,7 @@ test("a successful graph refresh clears a recovered refresh warning", () => {
     pipelines: [pipeline(1, 1, "running")],
   });
   model = reduce(model, { type: "openGraph", graph: graph([job("a")], "RUNNING") });
-  model = reduce(model, { type: "refreshError", source: "graph", message: "graphql failed" });
+  model = reduce(model, { type: "refreshError", target: "graph", message: "graphql failed" });
   expect(model.refreshWarning).toBe("graphql failed");
   expect(model.error).toBeNull();
   model = reduce(model, { type: "refreshGraph", graph: graph([job("a")], "RUNNING") });
@@ -378,7 +378,7 @@ test("manual refresh flag is set by the action and cleared by outcomes", () => {
   model = reduce(model, { type: "pipelines", pipelines: [pipeline(1, 1)] });
   expect(model.manualRefresh).toBeNull();
   model = reduce(model, { type: "manualRefresh", target: "graph" });
-  model = reduce(model, { type: "refreshError", source: "graph", message: "refresh failed" });
+  model = reduce(model, { type: "refreshError", target: "graph", message: "refresh failed" });
   expect(model.manualRefresh).toBeNull();
   expect(model.refreshWarning).toBe("refresh failed");
 });
@@ -530,16 +530,12 @@ test("a confirmation waits for a refresh the operator asked for", () => {
   // Confirming does not settle against the graph the refresh is replacing.
   const held = reduce(model, { type: "confirmJobAction" });
   expect(held.retry).toBeNull();
-  expect(held.confirm).toEqual({
-    kind: "play",
-    jobId: "20",
-    name: "deploy",
-    waiting: true,
-    graphAnswers: 0,
-  });
+  expect(held.confirm).toEqual(
+    expect.objectContaining({ kind: "play", jobId: "20", name: "deploy", waiting: true }),
+  );
 
   // Another Enter cannot release the hold, and neither can an answer to a
-  // different refresh (the pipeline list) that merely clears the flag.
+  // different refresh (the pipeline list) that leaves the graph as it is.
   expect(reduce(held, { type: "confirmJobAction" })).toEqual(held);
   const listAnswered = reduce(held, {
     type: "pipelines",
@@ -570,12 +566,38 @@ test("a confirmation waits for a refresh the operator asked for", () => {
 
   // A refresh that never answers still lets the operator cancel the wait.
   expect(reduce(held, { type: "cancelJobAction" }).confirm).toBeNull();
-  const failed = reduce(held, { type: "refreshError", source: "graph", message: "graphql failed" });
-  expect(failed.confirm).toBeNull();
-  expect(failed.retry).toEqual({ jobId: "20", screen: "graph", kind: "play" });
 });
 
-test("only a graph answer ends a held confirmation", () => {
+test("a list outcome cannot take the graph refresh marker away", () => {
+  let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
+  model = reduce(model, { type: "manualRefresh", target: "graph" });
+  expect(model.manualRefresh).toBe("graph");
+
+  // The list's refresh answers (either way) while the graph refresh is still
+  // unanswered: a confirmation asked for now must still wait for the graph.
+  for (const listed of [
+    reduce(model, { type: "pipelines", pipelines: [pipeline(10, 1)] }),
+    reduce(model, { type: "refreshError", target: "list", message: "list failed" }),
+  ]) {
+    expect(listed.manualRefresh).toBe("graph");
+    const asked = reduce(listed, {
+      type: "requestJobAction",
+      job: retryableJob("lint", "10"),
+    });
+    const confirmed = reduce(asked, { type: "confirmJobAction" });
+    expect(confirmed.confirm?.waiting).toBe(true);
+    expect(confirmed.retry).toBeNull();
+  }
+
+  // And the graph's own answer clears only its marker.
+  const graphAnswered = reduce(
+    reduce(model, { type: "manualRefresh", target: "list" }),
+    { type: "refreshGraph", graph: graphWithFailedJob() },
+  );
+  expect(graphAnswered.manualRefresh).toBe("list");
+});
+
+test("only a newer graph ends a held confirmation", () => {
   const manual = retryableJob("deploy", "20", "manual");
   let model = reduce(emptyModel, { type: "openGraph", graph: graph([manual], "MANUAL") });
   model = reduce(model, { type: "manualRefresh", target: "graph" });
@@ -583,24 +605,24 @@ test("only a graph answer ends a held confirmation", () => {
   const held = reduce(model, { type: "confirmJobAction" });
   expect(held.confirm?.waiting).toBe(true);
 
-  // The pipeline list's own refresh failing is not an answer to this graph.
-  const listFailed = reduce(held, {
-    type: "refreshError",
-    source: "list",
-    message: "list failed",
-  });
-  expect(listFailed.confirm?.waiting).toBe(true);
-  expect(listFailed.retry).toBeNull();
-  expect(listFailed.graph).toEqual(held.graph);
+  // A list answer, and a graph refresh that failed, both leave the graph the
+  // prompt was confirmed against in place: the wait goes on.
+  for (const unrelated of [
+    reduce(held, { type: "pipelines", pipelines: [pipeline(10, 1)] }),
+    reduce(held, { type: "refreshError", target: "graph", message: "graphql failed" }),
+  ]) {
+    expect(unrelated.confirm?.waiting).toBe(true);
+    expect(unrelated.retry).toBeNull();
+    expect(unrelated.graph).toEqual(held.graph);
+  }
 
-  // The graph's refresh failing does end the wait, against the graph on screen.
-  const graphFailed = reduce(held, {
-    type: "refreshError",
-    source: "graph",
-    message: "graphql failed",
+  // The next accepted answer releases it.
+  const answered = reduce(held, {
+    type: "refreshGraph",
+    graph: graph([manual], "MANUAL"),
   });
-  expect(graphFailed.confirm).toBeNull();
-  expect(graphFailed.retry).toEqual({ jobId: "20", screen: "graph", kind: "play" });
+  expect(answered.confirm).toBeNull();
+  expect(answered.retry).toEqual({ jobId: "20", screen: "graph", kind: "play" });
 });
 
 test("a held confirmation refuses a job whose status now calls for the other action", () => {

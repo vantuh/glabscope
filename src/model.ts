@@ -37,13 +37,12 @@ export type AppModel = {
     name: string;
     waiting?: boolean;
     /**
-     * How many graph answers had arrived when the wait began: the wait ends on
-     * the next one, so an unrelated list refresh can never release it.
+     * The graph the prompt was confirmed against. The wait ends when a newer
+     * answer replaces it, so a refresh of something else — or a failed one,
+     * which leaves the same graph in place — can never release it.
      */
-    graphAnswers?: number;
+    graphAtWait?: PipelineGraph;
   } | null;
-  /** Graph answers seen so far (successes and failures), for held confirmations. */
-  graphAnswers: number;
   /**
    * Non-fatal retry notice: a local refusal, a GitLab rejection, or the reason
    * a log screen gave up. Kept until the next navigation or retry, so a
@@ -72,7 +71,6 @@ export const emptyModel: AppModel = {
   manualRefresh: null,
   retry: null,
   confirm: null,
-  graphAnswers: 0,
   retryMessage: null,
   booted: false,
   pipelines: [],
@@ -95,7 +93,7 @@ export type Action =
   | { type: "startNavigating"; target: NonNullable<AppModel["navigating"]> }
   | { type: "openGraph"; graph: PipelineGraph }
   | { type: "refreshGraph"; graph: PipelineGraph }
-  | { type: "refreshError"; message: string; source: "list" | "graph" }
+  | { type: "refreshError"; message: string; target: "list" | "graph" }
   | { type: "manualRefresh"; target: "list" | "graph" }
   | { type: "requestJobAction"; job: JobNode }
   | { type: "cancelJobAction" }
@@ -253,14 +251,14 @@ export function pendingJobAction(
 }
 
 /**
- * A confirmation held back for a graph refresh settles once a newer graph answer
- * has arrived — that answer or its failure. Answers to other refreshes (the
- * pipeline list, for example) do not count, so they can never release the hold
- * against a graph the wait was meant to replace.
+ * A confirmation held back for a graph refresh settles once a newer graph
+ * answer has replaced the one it was confirmed against. Failures leave the same
+ * graph in place, and an answer to another screen's refresh never touches it, so
+ * neither can release the hold against state the wait was meant to replace.
  */
 function settleHeldConfirmation(model: AppModel): AppModel {
   const held = model.confirm;
-  if (!held?.waiting || model.graphAnswers <= (held.graphAnswers ?? 0)) {
+  if (!held?.waiting || model.graph === held.graphAtWait) {
     return model;
   }
   return settleConfirmation(model);
@@ -379,7 +377,9 @@ export function reduce(model: AppModel, action: Action): AppModel {
         ...model,
         booted: true,
         refreshWarning: null,
-        manualRefresh: null,
+        // A list answer ends only the list's refresh: the graph's own refresh
+        // must stay marked so a confirmation still waits for it.
+        manualRefresh: model.manualRefresh === "list" ? null : model.manualRefresh,
         pipelines: action.pipelines,
         selectedIndex: reconcileSelectedIndex(model, action.pipelines),
       };
@@ -421,8 +421,7 @@ export function reduce(model: AppModel, action: Action): AppModel {
           graph: action.graph,
           focusedJobIndex: matched !== -1 ? matched : model.focusedJobIndex,
           refreshWarning: null,
-          manualRefresh: null,
-          graphAnswers: model.graphAnswers + 1,
+          manualRefresh: model.manualRefresh === "graph" ? null : model.manualRefresh,
         });
       }
       const focusedJobIndex = visibleFocusIndex(action.graph, current?.id, current);
@@ -439,19 +438,18 @@ export function reduce(model: AppModel, action: Action): AppModel {
         focusedJobIndex,
         focusedAttemptIndex: attemptFocusIndex(action.graph, nextCard, keepAttemptId),
         refreshWarning: null,
-        manualRefresh: null,
-        graphAnswers: model.graphAnswers + 1,
+        manualRefresh: model.manualRefresh === "graph" ? null : model.manualRefresh,
       });
     }
     case "refreshError":
-      // A graph refresh that failed still ends the wait: the confirmation is
-      // settled against the graph that is on screen, since no newer answer
-      // exists. A list failure is not an answer to the graph at all.
+      // A failure leaves the graph in place, so a held confirmation keeps
+      // waiting for a newer answer: the operator can cancel it, and the graph
+      // keeps polling, so the wait always ends. Only the failing refresh's own
+      // marker clears.
       return settleHeldConfirmation({
         ...model,
         refreshWarning: action.message,
-        manualRefresh: null,
-        graphAnswers: model.graphAnswers + (action.source === "graph" ? 1 : 0),
+        manualRefresh: model.manualRefresh === action.target ? null : model.manualRefresh,
       });
     case "manualRefresh":
       return { ...model, manualRefresh: action.target };
@@ -486,7 +484,11 @@ export function reduce(model: AppModel, action: Action): AppModel {
       if (model.manualRefresh === "graph") {
         return {
           ...model,
-          confirm: { ...model.confirm, waiting: true, graphAnswers: model.graphAnswers },
+          confirm: {
+            ...model.confirm,
+            waiting: true,
+            graphAtWait: model.graph ?? undefined,
+          },
         };
       }
       return settleConfirmation(model);
