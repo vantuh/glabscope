@@ -520,6 +520,44 @@ test("a request while one is in flight or already asked changes nothing", () => 
   expect(reduce(inFlight, { type: "confirmJobAction" })).toEqual(inFlight);
 });
 
+test("a confirmation waits for a refresh the operator asked for", () => {
+  const manual = retryableJob("deploy", "20", "manual");
+  let model = reduce(emptyModel, { type: "openGraph", graph: graph([manual], "MANUAL") });
+  model = reduce(model, { type: "manualRefresh", target: "graph" });
+  model = reduce(model, { type: "requestJobAction", job: manual });
+  expect(model.confirm).toEqual({ kind: "play", jobId: "20", name: "deploy" });
+
+  // Confirming does not settle against the graph the refresh is replacing.
+  const held = reduce(model, { type: "confirmJobAction" });
+  expect(held.retry).toBeNull();
+  expect(held.confirm).toEqual({ kind: "play", jobId: "20", name: "deploy", waiting: true });
+
+  // The refresh answers that the job is already enqueued: nothing starts.
+  const refused = reduce(held, {
+    type: "refreshGraph",
+    graph: graph([retryableJob("deploy", "20", "pending")], "RUNNING"),
+  });
+  expect(refused.confirm).toBeNull();
+  expect(refused.retry).toBeNull();
+  expect(refused.retryMessage).toBe(
+    "that job's status changed while the prompt was open",
+  );
+
+  // A refresh that leaves it waiting settles the action instead.
+  const stillManual = reduce(held, {
+    type: "refreshGraph",
+    graph: graph([manual], "MANUAL"),
+  });
+  expect(stillManual.confirm).toBeNull();
+  expect(stillManual.retry).toEqual({ jobId: "20", screen: "graph", kind: "play" });
+
+  // A refresh that never answers still lets the operator cancel the wait.
+  expect(reduce(held, { type: "cancelJobAction" }).confirm).toBeNull();
+  const failed = reduce(held, { type: "refreshError", message: "graphql failed" });
+  expect(failed.confirm).toBeNull();
+  expect(failed.retry).toEqual({ jobId: "20", screen: "graph", kind: "play" });
+});
+
 test("a refresh in flight does not block the prompt", () => {
   let model = reduce(emptyModel, { type: "openGraph", graph: graphWithFailedJob() });
   model = reduce(model, { type: "manualRefresh", target: "graph" });
@@ -567,7 +605,7 @@ test("confirming refuses a job whose status changed while the prompt was open", 
   model = reduce(model, { type: "confirmJobAction" });
   expect(model.retry).toBeNull();
   expect(model.retryMessage).toBe(
-    "only failed or canceled jobs can be retried, and only waiting manual jobs can be run",
+    "that job's status changed while the prompt was open",
   );
 });
 

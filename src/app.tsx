@@ -63,8 +63,8 @@ export function ScreenPanel({
   keyHelp: string;
   status?: ReactNode;
   loadingLabel?: string;
-  /** The question of an open confirmation, over the panel's own content. */
-  prompt?: string;
+  /** An open confirmation, over the panel's own content. */
+  prompt?: { question: string; waiting: boolean };
   children: ReactNode;
 }) {
   return (
@@ -80,7 +80,7 @@ export function ScreenPanel({
       >
         <box position="relative" flexDirection="column" flexGrow={1}>
           {children}
-          {prompt ? <ConfirmPrompt question={prompt} /> : null}
+          {prompt ? <ConfirmPrompt question={prompt.question} waiting={prompt.waiting} /> : null}
           {loadingLabel ? <LoadingOverlay label={loadingLabel} /> : null}
         </box>
         {keyHelp ? (
@@ -151,10 +151,19 @@ function jobActionFailureMessage(kind: JobActionKind, error: unknown): string {
   return `${action} failed: ${error instanceof Error ? error.message : String(error)}`;
 }
 
-/** `retry job lint?` / `run job lint?`: what the operator is about to do. */
-function confirmQuestion(model: AppModel): string {
-  const action = model.confirm?.kind === "play" ? "run" : "retry";
-  return `${action} job ${model.confirm?.name}?`;
+/**
+ * The prompt of an open confirmation: `retry job lint?` / `run job lint?`, plus
+ * whether it is still waiting for the refresh the operator asked for.
+ */
+function confirmPrompt(model: AppModel): { question: string; waiting: boolean } | undefined {
+  if (!model.confirm) {
+    return undefined;
+  }
+  const action = model.confirm.kind === "play" ? "run" : "retry";
+  return {
+    question: `${action} job ${model.confirm.name}?`,
+    waiting: Boolean(model.confirm.waiting),
+  };
 }
 
 const FOCUS_BORDER = "#e5e7eb";
@@ -295,7 +304,7 @@ function LoadingOverlay({ label }: { label: string }) {
  * the status-bucket colors keep their meaning, and above the log-loading
  * overlay so it can never be covered while it owns the keyboard.
  */
-function ConfirmPrompt({ question }: { question: string }) {
+function ConfirmPrompt({ question, waiting }: { question: string; waiting: boolean }) {
   return (
     <box
       position="absolute"
@@ -321,7 +330,7 @@ function ConfirmPrompt({ question }: { question: string }) {
           {question}
         </text>
         <text fg={CHROME_COLOR} selectable={false}>
-          enter confirm  esc cancel
+          {waiting ? "waiting for the refresh…  esc cancel" : "enter confirm  esc cancel"}
         </text>
       </box>
     </box>
@@ -919,7 +928,7 @@ export function App() {
       <ScreenPanel
         title={`log ${job?.name ?? "job"}`}
         keyHelp={`${model.logDone ? "ended" : "live"} · ctrl+r retry · y yank · esc back`}
-        prompt={model.confirm ? confirmQuestion(model) : undefined}
+        prompt={confirmPrompt(model)}
         status={
           model.retry ? (
             <RefreshStatus label={ACTION_LABEL[model.retry.kind]} />
@@ -957,7 +966,7 @@ export function App() {
       <ScreenPanel
         title={`attempts ${card?.name ?? "job"}`}
         keyHelp="enter log  ctrl+r retry  esc graph  q quit"
-        prompt={model.confirm ? confirmQuestion(model) : undefined}
+        prompt={confirmPrompt(model)}
         status={
           model.retry ? (
             <RefreshStatus label={ACTION_LABEL[model.retry.kind]} />
@@ -993,7 +1002,7 @@ export function App() {
       <ScreenPanel
         title={`pipeline ${model.graph?.iid ?? ""}`}
         keyHelp="arrows move  enter log  r refresh  ctrl+r retry/run  esc list  q quit"
-        prompt={model.confirm ? confirmQuestion(model) : undefined}
+        prompt={confirmPrompt(model)}
         status={
           model.retry ? (
             <RefreshStatus label={ACTION_LABEL[model.retry.kind]} />

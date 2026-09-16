@@ -28,9 +28,15 @@ export type AppModel = {
   /**
    * The job action waiting for the operator's confirmation. The job's name is
    * stored so the prompt can still name it after a refresh drops it from the
-   * graph.
+   * graph, and `waiting` marks a confirmation held back until a refresh the
+   * operator asked for has answered.
    */
-  confirm: { kind: JobActionKind; jobId: string; name: string } | null;
+  confirm: {
+    kind: JobActionKind;
+    jobId: string;
+    name: string;
+    waiting?: boolean;
+  } | null;
   /**
    * Non-fatal retry notice: a local refusal, a GitLab rejection, or the reason
    * a log screen gave up. Kept until the next navigation or retry, so a
@@ -238,18 +244,46 @@ export function pendingJobAction(
   return kind === pending.kind ? { job, kind } : null;
 }
 
-/** Why the open prompt can no longer be honoured. */
+/**
+ * A confirmation that was held back for a refresh settles as soon as that
+ * refresh (or its failure) lands.
+ */
+function settleHeldConfirmation(model: AppModel): AppModel {
+  return model.confirm?.waiting ? settleConfirmation(model) : model;
+}
+
+/**
+ * Apply the open confirmation against the graph as it stands now: either the
+ * action is recorded in flight, or the prompt is replaced by the reason it
+ * cannot be honoured.
+ */
+function settleConfirmation(model: AppModel): AppModel {
+  const resolved = pendingJobAction(model);
+  if (!resolved) {
+    return { ...model, confirm: null, retryMessage: confirmRefusalMessage(model) };
+  }
+  return {
+    ...model,
+    confirm: null,
+    retry: {
+      jobId: resolved.job.numericId,
+      screen: model.screen,
+      kind: resolved.kind,
+    },
+    retryMessage: null,
+  };
+}
+
+/**
+ * Why the open prompt can no longer be honoured. The prompt only ever opened for
+ * a job that qualified, so a job that is still in the graph but no longer
+ * matches the confirmed action changed underneath it.
+ */
 function confirmRefusalMessage(model: AppModel): string {
   const pending = model.confirm;
-  const job = pending ? graphJobById(model, pending.jobId) : undefined;
-  if (!job) {
-    return JOB_GONE_MESSAGE;
-  }
-  const kind = jobActionKind(job, model.screen);
-  if (kind && kind !== pending?.kind) {
-    return JOB_CHANGED_MESSAGE;
-  }
-  return jobActionRefusalMessage(job, model.screen);
+  return pending && graphJobById(model, pending.jobId)
+    ? JOB_CHANGED_MESSAGE
+    : JOB_GONE_MESSAGE;
 }
 
 function jobActionRefusalMessage(job: Pick<JobNode, "isBridge">, screen: Screen): string {
@@ -366,13 +400,13 @@ export function reduce(model: AppModel, action: Action): AppModel {
       // clamps onto a different card.
       if (model.screen === "logs") {
         const matched = visibleMatchIndex(action.graph, current?.id, current);
-        return {
+        return settleHeldConfirmation({
           ...model,
           graph: action.graph,
           focusedJobIndex: matched !== -1 ? matched : model.focusedJobIndex,
           refreshWarning: null,
           manualRefresh: null,
-        };
+        });
       }
       const focusedJobIndex = visibleFocusIndex(action.graph, current?.id, current);
       const nextCard = action.graph.jobs[focusedJobIndex];
@@ -382,17 +416,23 @@ export function reduce(model: AppModel, action: Action): AppModel {
       // attempt that replaced it.
       const keepAttemptId =
         currentAttempt && currentAttempt.id === current?.id ? undefined : currentAttempt?.id;
-      return {
+      return settleHeldConfirmation({
         ...model,
         graph: action.graph,
         focusedJobIndex,
         focusedAttemptIndex: attemptFocusIndex(action.graph, nextCard, keepAttemptId),
         refreshWarning: null,
         manualRefresh: null,
-      };
+      });
     }
     case "refreshError":
-      return { ...model, refreshWarning: action.message, manualRefresh: null };
+      // A refresh that failed still ends the wait: the confirmation is settled
+      // against the graph that is on screen.
+      return settleHeldConfirmation({
+        ...model,
+        refreshWarning: action.message,
+        manualRefresh: null,
+      });
     case "manualRefresh":
       return { ...model, manualRefresh: action.target };
     case "requestJobAction": {
@@ -420,20 +460,13 @@ export function reduce(model: AppModel, action: Action): AppModel {
       if (!model.confirm) {
         return model;
       }
-      const resolved = pendingJobAction(model);
-      if (!resolved) {
-        return { ...model, confirm: null, retryMessage: confirmRefusalMessage(model) };
+      // A refresh the operator asked for is a newer answer than the graph this
+      // prompt was opened against, so hold the confirmation until that answer
+      // lands: the re-check must see it rather than the state it replaces.
+      if (model.manualRefresh) {
+        return { ...model, confirm: { ...model.confirm, waiting: true } };
       }
-      return {
-        ...model,
-        confirm: null,
-        retry: {
-          jobId: resolved.job.numericId,
-          screen: model.screen,
-          kind: resolved.kind,
-        },
-        retryMessage: null,
-      };
+      return settleConfirmation(model);
     }
     case "retrySucceeded": {
       // Only the log this restart was started from may be re-attached: the

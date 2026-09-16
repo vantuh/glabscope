@@ -2924,9 +2924,7 @@ test("a refresh that lands under the prompt keeps the confirmed action honest", 
     expect(retryCalls).toEqual([]);
     const frame = setup.captureCharFrame();
     expect(frame).not.toContain("enter confirm");
-    expect(frame).toContain(
-      "only failed or canceled jobs can be retried, and only waiting manual jobs can be run",
-    );
+    expect(frame).toContain("that job's status changed while the prompt was open");
   } finally {
     setup.renderer.destroy();
   }
@@ -3188,13 +3186,53 @@ test("a refresh asked for in the same frame leaves the request answerable", asyn
     expect(retryCalls).toEqual([]);
     expect(fetchGraphCalls.length).toBeGreaterThan(callsBefore);
 
-    // The request is still answerable: confirming starts exactly one action.
+    // Confirming waits for that refresh, then starts the action it approved.
     setup.mockInput.pressEnter();
+    await waitForFrame(
+      setup,
+      (f) => f.includes("waiting for the refresh…"),
+      "held confirmation",
+    );
+    expect(retryCalls).toEqual([]);
+    held.resolve(failedGraph());
     await waitFor(() => retryCalls.length === 1, "confirmed retry");
     expect(retryCalls).toEqual(["99"]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
 
-    held.resolve(failedGraph());
-    await setup.renderOnce();
+test("a confirmation held for a refresh never runs a job the refresh says is already started", async () => {
+  graphGate.resolve(manualGraph());
+  const setup = await testRender(<App />, { width: 100, height: 20 });
+  try {
+    await openFailedGraph(setup);
+    const held = Promise.withResolvers<PipelineGraph>();
+    graphGate = held;
+    setup.mockInput.pressKey("r");
+    setup.mockInput.pressKey("r", { ctrl: true });
+    const asked = await waitForFrame(setup, (f) => f.includes("enter confirm"), "run prompt");
+    expect(asked).toContain("run job deploy?");
+
+    setup.mockInput.pressEnter();
+    await waitForFrame(
+      setup,
+      (f) => f.includes("waiting for the refresh…"),
+      "held confirmation",
+    );
+    expect(playCalls).toEqual([]);
+
+    // The refresh reports the manual job as already enqueued: playing it would
+    // be the invalid-transition case that spawns a second attempt.
+    held.resolve(graphFor("RUNNING", [{ ...jobIn("deploy", "99", "pending"), stage: "deploy" }]));
+    const refused = await waitForFrame(
+      setup,
+      (f) => f.includes("that job's status changed while the prompt was open"),
+      "refusal after the refresh",
+    );
+    expect(refused).not.toContain("enter confirm");
+    expect(playCalls).toEqual([]);
+    expect(retryCalls).toEqual([]);
   } finally {
     setup.renderer.destroy();
   }
