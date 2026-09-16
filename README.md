@@ -41,6 +41,60 @@ bun /path/to/glabscope/src/index.tsx
 
 Set `GLAB_BIN` if `glab` is not the binary on `PATH` that you want to use.
 
+## Install as a command
+
+Building glabscope into a standalone binary makes it a command you can start from any GitLab project, without typing this checkout's path:
+
+```bash
+bash scripts/install.sh      # or: bun run install:local
+```
+
+The script builds `dist/glabscope` and symlinks it into `PREFIX`, which defaults to `~/.local/bin`. Set `PREFIX` to install somewhere else:
+
+```bash
+PREFIX=~/bin bash scripts/install.sh
+```
+
+If the target directory is not on `PATH`, the installer still succeeds and prints the line that adds it:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add that line to your shell profile to keep it. `bun` must be installed to build the binary. `glab` is needed only at run time, so a missing `glab` is a warning rather than a failure. Running the installer twice is safe: it leaves exactly one entry pointing at the current build.
+
+The installed command carries the Bun runtime and OpenTUI's native library, so it needs neither Bun nor this project's `node_modules` — only `glab` on `PATH` and a GitLab-bound working tree. It keeps the binding rule above: the project comes from the directory you launch it in, and no project is carried from one run to the next. Because the compiled binary runs in production mode, the React development warnings you may see under `bun start` are not printed by it.
+
+Update it after a `git pull` by rebuilding. The installed entry points at the build output rather than a copy of it, so no reinstall is needed:
+
+```bash
+git pull && bun run build
+```
+
+Remove it with:
+
+```bash
+bash scripts/uninstall.sh    # or: bun run uninstall:local
+```
+
+The uninstaller removes the entry only when it is a symlink to this project's build output. A regular file, a directory, or a link that points somewhere else is refused with a non-zero exit and left untouched, and nothing inside the project — `dist/` included — is deleted.
+
+Installing is macOS arm64 only for now: the installer builds for the host platform and does not cross-compile.
+
+### When the project moves or is deleted
+
+The installed entry resolves through this directory, so moving the clone leaves `glabscope` a dangling link: the command fails loudly and never runs a different program in its place. Repair it by running the installer from the new location:
+
+```bash
+bash scripts/install.sh
+```
+
+If you delete the clone outright, the installer goes with it and removing the leftover link is a manual step:
+
+```bash
+rm ~/.local/bin/glabscope
+```
+
 ## Controls
 
 | Screen | Keys |
