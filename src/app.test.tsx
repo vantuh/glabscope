@@ -28,6 +28,12 @@ let playError: string | null = null;
 let traceStaysLive = false;
 let traceStdout: Uint8Array | null = null;
 let traceStreams: QueuedTrace[] = [];
+/**
+ * A controlled tracer exit for tests that must end a live trace on cue:
+ * when set, the fake trace process's `exited` resolves (and its stderr
+ * closes) when the test resolves it; when null, a live tracer never exits.
+ */
+let traceEndGate: PromiseWithResolvers<number> | null = null;
 let listCalls = 0;
 let listScript: (PipelineRow[] | Error)[] = [];
 let listDefault: PipelineRow[] = [];
@@ -94,8 +100,18 @@ function fakeProc(): ReturnType<typeof Bun.spawn> {
         : closedStream());
   return {
     stdout,
-    stderr: live ? new ReadableStream<Uint8Array>({}) : closedStream(),
-    exited: live ? new Promise(() => {}) : Promise.resolve(0),
+    // A test-controlled exit closes stderr and resolves `exited`; otherwise a
+    // live tracer keeps both open forever.
+    stderr:
+      live && !traceEndGate
+        ? new ReadableStream<Uint8Array>({})
+        : closedStream(),
+    exited:
+      live && traceEndGate
+        ? traceEndGate.promise
+        : live
+          ? new Promise(() => {})
+          : Promise.resolve(0),
     kill() {
       procKills += 1;
     },
@@ -106,6 +122,8 @@ function fakeProc(): ReturnType<typeof Bun.spawn> {
 type QueuedTrace = {
   stream: ReadableStream<Uint8Array>;
   write: (text: string) => void;
+  /** Ends the stream so the app's stdout read finishes. */
+  close: () => void;
 };
 
 function queuedTrace(): QueuedTrace {
@@ -118,6 +136,7 @@ function queuedTrace(): QueuedTrace {
   return {
     stream,
     write: (text: string) => controller?.enqueue(new TextEncoder().encode(text)),
+    close: () => controller?.close(),
   };
 }
 
@@ -250,6 +269,7 @@ beforeEach(() => {
   traceStreams = [];
   traceStaysLive = false;
   traceStdout = null;
+  traceEndGate = null;
   listCalls = 0;
   listScript = [];
   listDefault = [
@@ -1812,6 +1832,158 @@ test("mouse drag on the list and attempts screens does not copy", async () => {
     await setup.renderOnce();
     await Bun.sleep(20);
     expect(writes).toEqual([]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+/** A thirty-line trace body, long enough to overflow the log panel. */
+const LONG_LOG_BODY = Array.from(
+  { length: 30 },
+  (_, index) => `row ${String(index).padStart(2, "0")}`,
+).join("\n");
+
+/** The visible body rows of a frame, so scroll assertions ignore chrome. */
+function logBodyRows(frame: string): string[] {
+  return frame.split("\n").filter((line) => /row \d\d/.test(line));
+}
+
+/** Open a live (never-exiting) trace whose output the test releases. */
+async function openLiveLog(setup: Awaited<ReturnType<typeof testRender>>) {
+  await openGraph(setup);
+  const trace = queuedTrace();
+  traceStreams.push(trace);
+  setup.mockInput.pressEnter();
+  await waitForFrame(setup, (frame) => frame.includes("live · ctrl+r retry"), "live log");
+  return trace;
+}
+
+/**
+ * Scroll up until the view has left the tail, then return the frame: the
+ * follow default keeps the last line visible until the operator scrolls.
+ * Each press waits a frame so it moves against the settled content size, not
+ * one still being measured after the tail landed.
+ */
+async function pauseFollowing(
+  setup: Awaited<ReturnType<typeof testRender>>,
+  tail: string,
+) {
+  for (let press = 0; press < 3; press++) {
+    await setup.renderOnce();
+    setup.mockInput.pressKey("ARROW_UP");
+  }
+  return waitForFrame(setup, (frame) => !frame.includes(tail), "paused log view");
+}
+
+test("opening a long log shows its tail, not its head", async () => {
+  const setup = await mountApp();
+  try {
+    await openGraph(setup);
+    traceStdout = new TextEncoder().encode(`${LONG_LOG_BODY}\n`);
+    setup.mockInput.pressEnter();
+    const frame = await waitForFrame(
+      setup,
+      (frame) => frame.includes("row 29"),
+      "log screen at the bottom",
+    );
+    expect(frame).not.toContain("row 00");
+    expect(frame).not.toContain("row 10");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("streamed chunks keep the tail visible without any input", async () => {
+  const setup = await mountApp();
+  try {
+    const trace = await openLiveLog(setup);
+    trace.write(`${LONG_LOG_BODY}\n`);
+    const first = await waitForFrame(
+      setup,
+      (frame) => frame.includes("row 29"),
+      "first batch tail",
+    );
+    expect(first).not.toContain("row 00");
+    trace.write("row 30\nrow 31\n");
+    const later = await waitForFrame(
+      setup,
+      (frame) => frame.includes("row 31"),
+      "later chunk tail",
+    );
+    expect(later).toContain("row 30");
+    expect(later).not.toContain("row 00");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("scrolling up pauses following while chunks keep arriving", async () => {
+  const setup = await mountApp();
+  try {
+    const trace = await openLiveLog(setup);
+    trace.write(`${LONG_LOG_BODY}\n`);
+    await waitForFrame(setup, (frame) => frame.includes("row 29"), "first batch tail");
+    const paused = await pauseFollowing(setup, "row 29");
+    trace.write("row 30\n");
+    const after = await waitForFrame(
+      setup,
+      (frame) => !frame.includes("row 30"),
+      "paused view unchanged by chunk",
+    );
+    // The view stays on the scrolled-to rows; the new chunk does not pull it.
+    expect(logBodyRows(after)).toEqual(logBodyRows(paused));
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("returning to the bottom resumes following", async () => {
+  const setup = await mountApp();
+  try {
+    const trace = await openLiveLog(setup);
+    trace.write(`${LONG_LOG_BODY}\n`);
+    await waitForFrame(setup, (frame) => frame.includes("row 29"), "first batch tail");
+    const paused = await pauseFollowing(setup, "row 29");
+    trace.write("row 30\n");
+    const stayed = await waitForFrame(
+      setup,
+      (frame) => !frame.includes("row 30"),
+      "paused view unchanged by chunk",
+    );
+    expect(logBodyRows(stayed)).toEqual(logBodyRows(paused));
+    setup.mockInput.pressKey("END");
+    await waitForFrame(setup, (frame) => frame.includes("row 30"), "resumed tail");
+    // Following stays on: the next chunk moves the view by itself, off the
+    // rows the paused view showed.
+    trace.write("row 31\n");
+    const still = await waitForFrame(
+      setup,
+      (frame) => frame.includes("row 31"),
+      "still following",
+    );
+    expect(still).not.toContain("row 17");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("the trace ending while scrolled up leaves the view alone", async () => {
+  const setup = await mountApp();
+  try {
+    traceEndGate = Promise.withResolvers();
+    const trace = await openLiveLog(setup);
+    trace.write(`${LONG_LOG_BODY}\n`);
+    await waitForFrame(setup, (frame) => frame.includes("row 29"), "first batch tail");
+    const paused = await pauseFollowing(setup, "row 29");
+    trace.close();
+    traceEndGate.resolve(0);
+    const ended = await waitForFrame(
+      setup,
+      (frame) => frame.includes("ended"),
+      "ended chrome",
+    );
+    expect(logBodyRows(ended)).toEqual(logBodyRows(paused));
+    expect(ended).not.toContain("row 29");
   } finally {
     setup.renderer.destroy();
   }

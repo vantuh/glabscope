@@ -1050,7 +1050,12 @@ export function App() {
         }
       >
         {model.retryMessage ? <NoticeLine>{model.retryMessage}</NoticeLine> : null}
-        <scrollbox focused flexGrow={1} stickyScroll>
+        <scrollbox
+          focused
+          flexGrow={1}
+          stickyScroll
+          stickyStart={model.logTrace.runs.length > 0 ? "bottom" : undefined}
+        >
           <text>
             {model.logTrace.runs.length === 0
               ? "waiting for glab ci trace…"
